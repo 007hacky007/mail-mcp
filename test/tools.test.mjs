@@ -33,6 +33,8 @@ test("expected tools are registered", () => {
     "search-messages",
     "get-message",
     "get-thread",
+    "list-attachments",
+    "save-attachment",
   ]) {
     assert.ok(names.has(expected), `${expected} missing from registry`);
   }

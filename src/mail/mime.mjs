@@ -146,3 +146,85 @@ export function findHtmlBody(tree) {
   }
   return null;
 }
+
+/** RFC 2047 encoded-words: =?charset?B/Q?text?= inside a header value. */
+function decodeEncodedWords(text) {
+  // Whitespace between two adjacent encoded words is not content (RFC 2047
+  // section 6.2); collapse it before decoding each word.
+  const joined = text.replace(/(\?=)\s+(=\?)/g, "$1$2");
+  return joined.replace(/=\?([^?]+)\?([bBqQ])\?([^?]*)\?=/g, (_m, charset, enc, payload) => {
+    let bytes;
+    if (enc.toLowerCase() === "b") {
+      bytes = Buffer.from(payload, "base64");
+    } else {
+      const q = payload.replace(/_/g, " ");
+      const arr = [];
+      for (let i = 0; i < q.length; i++) {
+        if (q[i] === "=" && /^[0-9A-Fa-f]{2}$/.test(q.slice(i + 1, i + 3))) {
+          arr.push(parseInt(q.slice(i + 1, i + 3), 16));
+          i += 2;
+        } else {
+          arr.push(q.charCodeAt(i) & 0xff);
+        }
+      }
+      bytes = Buffer.from(arr);
+    }
+    return decodeCharset(bytes, charset);
+  });
+}
+
+/** RFC 2231 extended parameter value: charset'language'percent-encoded. */
+function decodeRfc2231(value) {
+  const m = value.match(/^([^']*)'[^']*'(.*)$/);
+  if (!m) return value;
+  const [, charset, encoded] = m;
+  const bytes = [];
+  for (let i = 0; i < encoded.length; i++) {
+    if (encoded[i] === "%" && /^[0-9A-Fa-f]{2}$/.test(encoded.slice(i + 1, i + 3))) {
+      bytes.push(parseInt(encoded.slice(i + 1, i + 3), 16));
+      i += 2;
+    } else {
+      bytes.push(encoded.charCodeAt(i) & 0xff);
+    }
+  }
+  return decodeCharset(Buffer.from(bytes), charset || "utf-8");
+}
+
+/** Decoded filename of a part, from disposition or content-type, or null. */
+function filenameOf(part) {
+  const dispExt = part.disposition.params["filename*"];
+  if (dispExt) return decodeRfc2231(dispExt);
+  const typeExt = part.contentType.params["name*"];
+  if (typeExt) return decodeRfc2231(typeExt);
+  const plain = part.disposition.params.filename ?? part.contentType.params.name;
+  if (plain === undefined) return null;
+  return decodeEncodedWords(plain);
+}
+
+/**
+ * Attachments of a message, parsed from the MIME source rather than read from
+ * Mail's attachment objects, whose names and types are less reliable. A part
+ * counts as an attachment when it is explicitly disposed as one or when it
+ * carries a filename; body parts and anonymous inline parts do not. Each
+ * entry carries its decoded bytes as `body` (a Buffer) for save-attachment;
+ * tools must not pass those bytes into the conversation.
+ */
+export function collectAttachments(tree) {
+  const out = [];
+  for (const leaf of leafParts(tree)) {
+    const filename = filenameOf(leaf);
+    const isAttachment = leaf.disposition.value === "attachment" || filename !== null;
+    if (!isAttachment) continue;
+    const contentId = (getHeader(leaf.headers, "Content-ID") ?? "").replace(/^<|>$/g, "") || null;
+    out.push({
+      index: out.length,
+      filename,
+      mimeType: leaf.contentType.value || "application/octet-stream",
+      sizeBytes: leaf.body ? leaf.body.length : 0,
+      disposition: leaf.disposition.value || null,
+      contentId,
+      body: leaf.body ?? Buffer.alloc(0),
+    });
+  }
+  return out;
+}

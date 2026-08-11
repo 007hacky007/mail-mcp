@@ -13,6 +13,8 @@ import { createListMessagesTool } from "./list-messages.mjs";
 import { createSearchMessagesTool } from "./search-messages.mjs";
 import { createGetMessageTool } from "./get-message.mjs";
 import { createGetThreadTool } from "./get-thread.mjs";
+import { createListAttachmentsTool } from "./list-attachments.mjs";
+import { createSaveAttachmentTool } from "./save-attachment.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(resolve(HERE, "..", "..", "package.json"), "utf8"));
@@ -29,4 +31,6 @@ export const tools = [
   createSearchMessagesTool(),
   createGetMessageTool(),
   createGetThreadTool(),
+  createListAttachmentsTool(),
+  createSaveAttachmentTool(),
 ];
