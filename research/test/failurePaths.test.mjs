@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { replayReachedOnlyFailurePaths } from "../failurePaths.mjs";
+import { replayReachedOnlyFailurePaths, isOkStyleKey } from "../failurePaths.mjs";
 
 // Fix round 2 (task-5-rereview.md, Fix C): unit coverage for the
 // fix-round-1 all-or-nothing detector - zero osascript calls, fixtures
@@ -59,4 +59,35 @@ test("flags nested through an array are all collected", () => {
     replayReachedOnlyFailurePaths({ accounts: [{ ok: false }, { ok: false }] }),
     true
   );
+});
+
+// Fix round 3 (task-5-rereview-2.md, second/smaller finding): a raw
+// `/ok$/i` suffix test treats "outlook"'s trailing lowercase "ok" as
+// equivalent to "Ok" (case-insensitive matching does not distinguish
+// them), so a boolean merely named that way would be swept into a
+// success-flag collection. isOkStyleKey requires either an exact "ok" key
+// or a camelCase-boundary "Ok"/"OK" suffix (the character immediately
+// before it is lowercase or a digit) - "outlook" has neither.
+test("isOkStyleKey matches an exact 'ok' key in any case", () => {
+  assert.equal(isOkStyleKey("ok"), true);
+  assert.equal(isOkStyleKey("OK"), true);
+  assert.equal(isOkStyleKey("Ok"), true);
+});
+
+test("isOkStyleKey matches a camelCase-boundary Ok/OK suffix", () => {
+  assert.equal(isOkStyleKey("fetchOk"), true);
+  assert.equal(isOkStyleKey("readOk"), true);
+  assert.equal(isOkStyleKey("allMailOK"), true);
+});
+
+test("isOkStyleKey does NOT match 'outlook' (no camelCase boundary)", () => {
+  assert.equal(isOkStyleKey("outlook"), false);
+});
+
+test("isOkStyleKey does NOT match an all-caps word that coincidentally ends in OK", () => {
+  assert.equal(isOkStyleKey("BOOK"), false);
+});
+
+test("a boolean field named 'outlook' is not collected by replayReachedOnlyFailurePaths", () => {
+  assert.equal(replayReachedOnlyFailurePaths({ outlook: false, fetchOk: true }), false);
 });

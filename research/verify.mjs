@@ -40,7 +40,27 @@ for (const file of files) {
     // and redacted fingerprints diverge. redact() can throw on a field the
     // allowlist does not recognize; that throw is caught by this file's
     // try below, same as any other unexpected failure for this probe.
-    const diffs = diffShapes(recorded.shape, shapeOf(redact(result.data)));
+    //
+    // Computed ONCE and reused below for the success-profile diff too (fix
+    // round 3, task-5-rereview-2.md): research/successProfile.mjs now keys
+    // an array item's path segment by an IDENTITY VALUE (a mailbox `path`,
+    // an account `name`) when the item has one, not just by booleans - and
+    // that identity value is a real account/mailbox NAME, which must be
+    // redacted to its pseudonym before it is used, exactly like every other
+    // string this project ever writes to disk or compares. Computing the
+    // profile from RAW `result.data` (as this file did before this fix
+    // round, when only boolean VALUES were compared and redaction was
+    // irrelevant to them) would build live paths out of REAL names while
+    // the recorded baseline's paths are built out of PSEUDONYMS - the two
+    // would never match, on any probe, ever, turning every identity-keyed
+    // path into a permanent, spurious "missing"/"new" pair. Reusing this
+    // one redacted copy for both diffs also means a live-data field redact()
+    // does not recognize is caught by the shape diff above (or the outer
+    // try/catch, if redact() itself throws) before the profile diff ever
+    // runs, so by the time it does, raw and redacted are already known to
+    // be structurally compatible.
+    const redactedLive = redact(result.data);
+    const diffs = diffShapes(recorded.shape, shapeOf(redactedLive));
     if (diffs.length > 0) {
       console.error(`FAIL ${recorded.probe}:\n  ${diffs.join("\n  ")}`);
       failures++;
@@ -61,14 +81,9 @@ for (const file of files) {
     // recording made before this fix round has no `successProfile` field
     // at all (`undefined`, not `{}`), and there is no baseline to compare
     // against - that is not the same as "every path was removed," which is
-    // why this is SKIPPED, not diffed against `{}`, in that case. Checked
-    // against the RAW live result, not a redacted copy: booleans pass
-    // through redact() unchanged (research/redact.mjs's walk() only ever
-    // rewrites strings), so this sees the identical flag values either way
-    // and avoids depending on redact() having already run successfully
-    // above.
+    // why this is SKIPPED, not diffed against `{}`, in that case.
     if (recorded.successProfile !== undefined) {
-      const profileDiffs = diffSuccessProfile(recorded.successProfile, collectSuccessProfile(result.data));
+      const profileDiffs = diffSuccessProfile(recorded.successProfile, collectSuccessProfile(redactedLive));
       if (profileDiffs.length > 0) {
         console.error(`FAIL ${recorded.probe}: success-profile drift:\n  ${profileDiffs.join("\n  ")}`);
         failures++;

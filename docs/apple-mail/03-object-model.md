@@ -1030,6 +1030,171 @@ check and the success-profile diff, and relies entirely on shape/key-set
 drift being loud enough to notice on its own - which, per Gap 1 above, a
 single silently-failing property is not.
 
+### Fix round 3: the success profile's own array paths fabricated drift on ordinary list churn
+
+A second review (`task-5-rereview-2.md`) confirmed fix round 2's five
+items and found one new, High-severity defect in the fix itself: the
+success profile's array paths were built from the raw array INDEX -
+`accounts[2].mailboxCount.ok` - which the re-reviewer demonstrated
+fabricates drift on completely ordinary changes, not just reordering.
+
+**The defect, demonstrated two ways.** Inserting one mailbox in the middle
+of a 5-item mixed true/false fixture shifted two later items' indices and
+produced two diffs that read exactly like real regressions - a
+`true -> false` and a `false -> true` line, textually indistinguishable
+from a genuine per-property break. Separately, splicing one account out of
+this project's own committed `research/results/02-accounts.json` produced
+7 diffs, all attributed to whichever account the shift left sitting at the
+removed account's old index - the wrong account - and only failed to
+produce fabricated *flips* because every real flag in that file happens to
+be `true` today. Appending at the tail stayed clean either way, confirming
+the defect is specifically about insertion or removal at a non-terminal
+position, not "any list change." **Why this matters as much as the
+original defect:** accounts and mailboxes change constantly in ordinary
+use - a folder gets added, an account gets disabled, a mailbox gets
+renamed - and every one of those would have produced a wall of spurious
+drift reports naming the wrong objects. A detector that cries wolf gets
+ignored, and an ignored detector fails exactly as completely as one that
+reports a false match.
+
+**The fix: key array items by IDENTITY, not position.** `identitySegmentFor()`
+in `research/successProfile.mjs` picks the first usable identity field from
+an array item, in this order: `path`, then `name`, then `probe` - falling
+back to the numeric index only when an item has none of the three as a
+usable string. A worked example, before and after:
+
+```
+Before (position-keyed, fix round 2):
+  accounts[2].mailboxCount.ok
+
+After (identity-keyed, fix round 3):
+  accounts[name=Account B].mailboxes[path=Folder 1/Sub].readOk
+```
+
+`path` is preferred over `name` deliberately, not arbitrarily: section 3 of
+this very document already established that a bare mailbox name can
+collide (two sibling mailboxes literally named `Junk` in the same
+account), while a full path disambiguates it - the same reasoning applies
+here. A subtlety specific to this project's actual data, found while
+implementing this: `research/probes/02-accounts.js`'s account objects wrap
+`name` in this project's own `attempt()` convention (`{ok, value}`, not a
+bare string), so `identityValueOf()` unwraps that shape too, using the
+wrapped `value` as the identity - without it, every account in this
+project's own real recordings would still fall back to the index, and the
+fix would not actually close the demonstrated bug for this project's own
+data.
+
+**Re-proven against the exact re-reviewer scenarios, not just asserted.**
+The mid-list insertion fixture now reports exactly one diff - the genuinely
+new item - and none of the fabricated flips. The `02-accounts.json`
+deletion scenario, re-run with a fresh identity-keyed profile on both
+sides (this project's real, redacted account data - the removed account's
+own redacted name descriptor is `<str len=7 chars=ascii>`, one of the
+generic descriptors discussed below, not a proper pseudonym, because this
+particular account's real name is not email-shaped), now produces exactly
+7 diffs, every one correctly naming the *removed* account's own identity,
+none naming its former neighbor:
+
+```
+accounts[name=<str len=7 chars=ascii>].name.ok: recorded as true, missing from this replay
+accounts[name=<str len=7 chars=ascii>].enabled.ok: recorded as true, missing from this replay
+accounts[name=<str len=7 chars=ascii>].accountType.ok: recorded as true, missing from this replay
+accounts[name=<str len=7 chars=ascii>].emailAddresses.ok: recorded as true, missing from this replay
+accounts[name=<str len=7 chars=ascii>].userName.ok: recorded as true, missing from this replay
+accounts[name=<str len=7 chars=ascii>].serverName.ok: recorded as true, missing from this replay
+accounts[name=<str len=7 chars=ascii>].mailboxCount.ok: recorded as true, missing from this replay
+```
+
+**Identity values are redacted, and pseudonyms are stable - confirmed, not
+assumed.** Both `research/record.mjs` and `research/verify.mjs` compute
+this profile from already-redacted data (this fix round also corrected
+`verify.mjs`, which previously computed the live profile from *raw* data -
+harmless when only booleans were compared, but wrong the moment a real
+string identity value is part of the path; fixed by redacting once and
+reusing that copy for both the shape diff and the profile diff). Verified
+directly: feeding `collectSuccessProfile` a fictional real-looking name
+after running it through `redact()` first produces a path containing the
+pseudonym, never the original string. Pseudonym stability was verified the
+same way: calling `redact()` twice on the identical input produces the
+identical pseudonym both times - `redact.mjs`'s pseudonym assignment is a
+deterministic function of first-seen order within one call, never random
+or process-state-dependent, so "the same input" genuinely produces "the
+same identity" every time.
+
+**One accepted, documented residual limitation, found while verifying the
+above:** `research/probes/02-accounts.js`'s account names, once redacted,
+are sometimes a proper pseudonym (`user4@example.com`, when the real name
+happens to be email-shaped) and sometimes a generic length/character-class
+descriptor (`<str len=5 chars=ascii>`, `research/redact.mjs`'s fallback for
+a string it does not otherwise recognize) - and a descriptor is **not**
+guaranteed unique: two different real accounts whose names happen to share
+a length and character class would collide onto the identical
+identity-keyed path. Verified this does not currently happen (this
+machine's 5 accounts' descriptors are 3 unique pseudonyms and 2
+different-length descriptors - no collision), and accepted rather than
+worked around further, because rejecting a generic descriptor as "not a
+real identity" would fall all the way back to the index for exactly the
+non-email-shaped account names this fix exists to protect, silently
+reintroducing the bug this whole round closes. Narrower than the
+bug it replaces: a descriptor collision requires a coincidence (two
+accounts of the same redacted name length and character class); the
+index-based bug fired on every ordinary list edit, unconditionally.
+
+**Renaming an item is a real, honest change worth reporting - made
+readable rather than alarming.** An identity-keyed path changing when its
+underlying item is renamed is correct behavior, not a defect: the flags
+genuinely moved to a new location. Reporting it as two disconnected
+`missing`/`new` lines would read exactly like data loss, though, so
+`diffSuccessProfile` now recognizes the pattern - a path disappearing and a
+structurally-identical path (same field name used for identity, same
+surrounding structure) appearing elsewhere, carrying the identical recorded
+value - and reports it as one line: `<old path> -> <new path>: renamed
+(value unchanged: <value>)`. If the value also changed, the pair is
+deliberately **not** merged - reporting a plain missing line and a plain
+new line separately, since guessing "renamed and regressed" in one line
+would be less honest than stating both facts plainly.
+
+**Tightened, as a smaller second fix: the flag matcher itself.** The
+original `/ok$/i` suffix test is case-insensitive, so it cannot tell
+"fetchOk" (a real camelCase boundary) from "outlook" (a lowercase word that
+merely happens to end in the letters o-then-k) - both read as "ends in ok,
+ignoring case" to it. `isOkStyleKey` (exported from
+`research/failurePaths.mjs`, imported by `research/successProfile.mjs` so
+both modules share one definition rather than two copies that could drift
+apart) now requires either an exact `ok` key (any case) or a suffix match
+where the character immediately before `Ok`/`OK` is a lowercase letter or
+digit - a genuine case transition. `fetchOk` and `readOk` match; `outlook`
+and an all-caps word that coincidentally ends in `OK` (e.g. `BOOK`) do not,
+since neither has that transition.
+
+**Unit-tested against every one of the re-reviewer's own scenarios,
+fixtures only, zero `osascript` calls:** a non-tail insertion (asserts no
+drift for untouched items), a non-tail removal (asserts the removed item
+is named correctly, not its neighbor), the same removal reproduced against
+a fixture matching `02-accounts.js`'s real `{ok, value}`-wrapped shape, the
+tail-append case (confirmed to still work), a rename with the value
+unchanged (asserts a readable rename line), a rename where the value also
+changed (asserts it is NOT merged into one misleadingly-clean rename line),
+`outlook` correctly excluded, a pseudonym-stability check against the real
+`redact()` function, a check that an identity-keyed path never contains
+the pre-redaction original string, and the identity-less-item fallback to
+index. `npm test` reports 118 (102 before this fix round plus these 16).
+
+**Re-recording was required, and confirmed.** The path-keying scheme
+itself changed (index to identity), so every previously-committed
+`successProfile` baseline using the old index-based paths is permanently
+incompatible with the new identity-based live computation - verified
+directly before re-recording: replaying the old `02-accounts.json`
+baseline against a freshly-computed identity-keyed live profile produced a
+wall of spurious mismatches (every recorded path "missing," every live
+path "new"), exactly the failure mode re-recording exists to avoid.
+`02-accounts`, `04-message-props`, and `12-message-sizes` were re-recorded
+with their existing stored args unchanged (none, and `0 INBOX`,
+respectively); `node research/verify.mjs` returned to `7/7` afterward, with
+real timings behind every probe (`04-message-props` and `03-mailboxes`
+both taking tens of seconds on this run, not the sub-second timing a
+failure-path replay would produce).
+
 ## 5. Message identity, in full
 
 This is the section every other document in this archive depends on.

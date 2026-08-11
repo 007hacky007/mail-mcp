@@ -10,9 +10,29 @@
 // the pure logic directly, with zero osascript calls, rather than only
 // through a hand-run transcript.
 
-// Recursively collects every boolean value in `value` whose own key is
-// exactly "ok" or ends in "Ok" (case-insensitive) - this project's two
-// success-flag conventions, {ok: ...} and {fetchOk: ...} - into `out`.
+// Fix round 3 (task-5-rereview-2.md, second/smaller finding): a key is an
+// ok-style success flag when it is EXACTLY "ok" (any case), or ends in
+// "Ok"/"OK" specifically at a camelCase boundary - the character
+// immediately before it is a lowercase letter or digit, i.e. there is a
+// genuine case transition there. "fetchOk" and "readOk" match; a key that
+// merely happens to end in the lowercase letters "o" then "k", like
+// "outlook", does not, since there is no transition to an uppercase "O".
+// The original version of this match, a raw `/ok$/i` suffix test, does not
+// make this distinction: case-insensitive matching treats "outlook"'s
+// trailing "ok" as equivalent to "Ok" and would incorrectly sweep a
+// boolean merely named that way into a success-flag collection. Exported
+// so research/successProfile.mjs uses the identical rule rather than a
+// second, independently-maintained copy that could drift out of sync.
+const OK_EXACT_RE = /^ok$/i;
+const OK_CAMELCASE_SUFFIX_RE = /[a-z0-9](Ok|OK)$/;
+
+export function isOkStyleKey(key) {
+  return OK_EXACT_RE.test(key) || OK_CAMELCASE_SUFFIX_RE.test(key);
+}
+
+// Recursively collects every boolean value in `value` whose own key
+// satisfies isOkStyleKey - this project's two success-flag conventions,
+// {ok: ...} and {fetchOk: ...} - into `out`.
 export function collectOkFlags(value, out) {
   if (value === null || typeof value !== "object") return;
   if (Array.isArray(value)) {
@@ -20,7 +40,7 @@ export function collectOkFlags(value, out) {
     return;
   }
   for (const [k, v] of Object.entries(value)) {
-    if (typeof v === "boolean" && /ok$/i.test(k)) out.push(v);
+    if (typeof v === "boolean" && isOkStyleKey(k)) out.push(v);
     else collectOkFlags(v, out);
   }
 }
