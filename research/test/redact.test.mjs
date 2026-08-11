@@ -97,3 +97,149 @@ test("preserves array length and object key sets exactly", () => {
   assert.equal(out.a.length, 3);
   assert.deepEqual(Object.keys(out.b).sort(), ["c", "d"]);
 });
+
+// --- Round 2: fail-closed hardening (see task-2-review.md, all inputs are
+// fictional, never the human partner's real data) -------------------------
+
+test("[review 1.1] a bare display name under an unrecognized key does not leak", () => {
+  const r = newRedactor();
+  const out = r({ sender: "Jane Roe" });
+  assert.ok(!JSON.stringify(out).includes("Jane Roe"));
+  assert.match(out.sender, /^<str len=\d+ chars=ascii>$/);
+});
+
+test("[review 1.5] every key-based rule fires case-insensitively", () => {
+  const r = newRedactor();
+  const out = r({
+    Subject: "Meeting with Jane Roe about the merger",
+    AccountName: "jane.roe@personalmail.com",
+    Name: "Thornlands",
+    Path: "Work/Thornlands/2026",
+    MailboxNames: ["Thornlands", "INBOX"],
+    AccountNames: ["Acme Corp"],
+  });
+  const dump = JSON.stringify(out);
+  assert.ok(!dump.includes("Jane Roe"));
+  assert.ok(!dump.includes("merger"));
+  assert.ok(!dump.includes("Thornlands"));
+  assert.ok(!dump.includes("Acme Corp"));
+  assert.ok(!dump.includes("jane.roe@personalmail.com"));
+  assert.match(out.Subject, /^<subject len=\d+ chars=ascii>$/);
+  assert.equal(out.AccountName, "Account A");
+  assert.deepEqual(out.MailboxNames, [out.MailboxNames[0], "INBOX"]);
+});
+
+test("[review 1.5] a non-email-shaped account name is opaque, not a coincidental pass-through", () => {
+  const r = newRedactor();
+  const out = r({ AccountName: "Acme Corp Ltd (Personal)", account: "Acme Corp Ltd (Personal)" });
+  assert.equal(out.AccountName, "Account A");
+  assert.ok(!JSON.stringify(out).includes("Acme Corp"));
+});
+
+test("[review 1.6] folder/account labels under unrecognized key names do not leak", () => {
+  const r = newRedactor();
+  const out = r({
+    folder: "Thornlands",
+    folderPath: "Work/Thornlands/2026",
+    mailboxPath: "Work/Thornlands/2026",
+    acct: "Acme Corp Support",
+    location: "Work/Thornlands/2026",
+    where: { value: "Work/Thornlands/2026" },
+  });
+  const dump = JSON.stringify(out);
+  assert.ok(!dump.includes("Thornlands"));
+  assert.ok(!dump.includes("Acme Corp"));
+});
+
+test("[review 1.7] a folder name nested under mailboxes[].children[] is pseudonymized", () => {
+  const r = newRedactor();
+  const out = r({
+    mailboxes: [
+      { name: "Thornlands", children: [{ name: "SubThornlands" }] },
+      [{ name: "NestedArrayFolder" }],
+    ],
+  });
+  const dump = JSON.stringify(out);
+  assert.ok(!dump.includes("Thornlands"));
+  assert.ok(!dump.includes("SubThornlands"));
+  assert.ok(!dump.includes("NestedArrayFolder"));
+  assert.equal(out.mailboxes[0].name, "Folder 1");
+  assert.notEqual(out.mailboxes[0].children[0].name, "SubThornlands");
+});
+
+test("[review 1.8] a bare string array under the trusted mailboxes/accounts keys is pseudonymized", () => {
+  const r = newRedactor();
+  const out = r({
+    mailboxes: ["Thornlands", "INBOX"],
+    accounts: ["jane.roe@personalmail.com", "Acme Corp"],
+  });
+  assert.deepEqual(out.mailboxes, [out.mailboxes[0], "INBOX"]);
+  assert.notEqual(out.mailboxes[0], "Thornlands");
+  assert.ok(!JSON.stringify(out).includes("Acme Corp"));
+  assert.ok(!JSON.stringify(out).includes("jane.roe@personalmail.com"));
+});
+
+test("[review 1.9] an object key carrying an address or a display name does not leak", () => {
+  const r = newRedactor();
+  const out = r({ "jane.roe@personalmail.com": { unread: 3 }, "Jane Roe": { flagged: 1 } });
+  const keys = Object.keys(out);
+  assert.equal(keys.length, 2);
+  assert.ok(!keys.some((k) => k.includes("jane.roe@personalmail.com")));
+  assert.ok(!keys.some((k) => k.includes("Jane Roe")));
+  // Values under the redacted keys must still be reachable and untouched
+  // (numbers are not personal data).
+  const values = Object.values(out);
+  assert.ok(values.some((v) => v.unread === 3));
+  assert.ok(values.some((v) => v.flagged === 1));
+});
+
+test("[review 1.10] a non-ASCII / IDN email address does not leak (review's exact input)", () => {
+  const r = newRedactor();
+  // Exact input from task-2-review.md 1.10. The domain is a placeholder
+  // German place name used by the reviewer to exercise a non-ASCII/IDN
+  // domain, not anyone's real address.
+  const out = r("contact jurgen@münchen.de please");
+  assert.ok(!out.includes("jurgen"));
+  assert.ok(!out.includes("münchen"));
+});
+
+test("[review 1.11] an email address with no dotted TLD does not leak", () => {
+  const r = newRedactor();
+  const out = r("reach me at jsmith@corpmail please");
+  assert.ok(!out.includes("jsmith"));
+  assert.ok(!out.includes("corpmail"));
+});
+
+test("[review 1.12] a live Date instance survives as a Date, not an empty object", () => {
+  const r = newRedactor();
+  const when = new Date("2026-01-01T00:00:00Z");
+  const out = r({ when });
+  assert.ok(out.when instanceof Date);
+  assert.equal(out.when.getTime(), when.getTime());
+});
+
+test("[review 1.13] a __proto__ key is preserved as an own property, not silently dropped", () => {
+  const r = newRedactor();
+  const input = JSON.parse('{"__proto__": "jane.roe@personalmail.com", "other": 1}');
+  const out = r(input);
+  assert.deepEqual(Object.keys(out).sort(), ["__proto__", "other"]);
+  assert.equal(out.other, 1);
+  assert.ok(!Object.getOwnPropertyDescriptor(out, "__proto__").value.includes("jane.roe"));
+});
+
+test("[coordinator example] a subject value nested under an unrecognized leaf key does not leak", () => {
+  const r = newRedactor();
+  const out = r({ props: { subject: { sample: "Q3 budget review with sensitive client info" } } });
+  const dump = JSON.stringify(out);
+  assert.ok(!dump.includes("budget"));
+  assert.ok(!dump.includes("sensitive client"));
+});
+
+test("[fail closed] a key no rule has ever heard of, holding a personal-looking string, is redacted", () => {
+  const r = newRedactor();
+  const secret = "this-is-a-personal-looking-secret-string-xyz123";
+  const out = r({ someTotallyUnknownField: secret });
+  assert.notEqual(out.someTotallyUnknownField, secret);
+  assert.ok(!JSON.stringify(out).includes(secret));
+  assert.match(out.someTotallyUnknownField, /^<str len=\d+ chars=ascii>$/);
+});
