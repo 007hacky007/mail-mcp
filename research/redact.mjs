@@ -41,11 +41,47 @@ const JS_TYPE_NAMES = new Set([
   "number", "string", "boolean", "object", "undefined", "array", "function", "bigint", "symbol",
 ]);
 const isJsTypeName = (s) => JS_TYPE_NAMES.has(s);
+// Fix round 4 (task-2-rereview-2.md, Critical): `accountType` used to be
+// validated by the shape pattern /^[a-z]{1,12}$/, which admits any short
+// lowercase word - so "jane", "roe" and "janedoe" survived VERBATIM under an
+// `accountType` key. That is precisely the content-blind-pattern failure
+// family this whole table replaced, just relocated to one key. It is now an
+// explicit enumeration of the account types Mail actually reports (every
+// account on the development machine reports `imap`; Mail's scripting
+// dictionary also defines POP, SMTP and iCloud account classes, and newer
+// versions report Exchange), matched case-insensitively on the VALUE so
+// `IMAP`/`iCloud` survive with their original casing intact.
+// The failure direction is deliberately safe: a real account reporting a
+// type not listed here becomes an opaque descriptor, so the archive loses
+// one word of detail and nothing breaks - whereas a shape check silently
+// publishes a surname. That asymmetry is why this must stay an enum: widen
+// it by ADDING the exact literal Mail reported, never by loosening it back
+// into a pattern.
+const ACCOUNT_TYPE_NAMES = new Set([
+  "imap", "pop", "smtp", "icloud", "exchange", "unknown",
+]);
+// Fix round 4 (task-2-rereview-2.md, Minor): `probe` used to be
+// /^[0-9]{2}-[a-z0-9-]+$/, which admits arbitrary lowercase-hyphen text
+// after an NN- prefix ("20-jane-roe-notes" survived verbatim). The field
+// only ever holds the basename of one of the project's 12 fixed probe
+// files, enumerated in
+// docs/superpowers/plans/2026-08-11-apple-mail-knowledge-archive.md as
+// research/probes/NN-name.js, so it is a finite literal set. Matched
+// exactly (these are lowercase filenames, not free text). Adding a 13th
+// probe therefore requires adding its name here - the same intentional
+// friction STRUCTURAL_KEY_NAMES already imposes on new probe FIELDS, with
+// the same safe failure direction (an unlisted probe name records as an
+// opaque descriptor rather than leaking whatever else lands in this field).
+const PROBE_NAMES = new Set([
+  "00-hello", "01-argv-modes", "02-accounts", "03-mailboxes",
+  "04-message-props", "05-bulk-fetch", "06-whose-vs-bulk", "07-coldstart",
+  "08-gmail-inbox", "09-unicode-dates", "10-attachment-source", "11-errors",
+]);
 const VALUE_VALIDATORS = new Map([
-  ["probe", (s) => /^[0-9]{2}-[a-z0-9-]+$/.test(s)],
+  ["probe", (s) => PROBE_NAMES.has(s)],
   ["mode", (s) => s === "file" || s === "-e"],
   ["chars", (s) => s === "ascii" || s === "unicode"],
-  ["accounttype", (s) => /^[a-z]{1,12}$/.test(s)],
+  ["accounttype", (s) => ACCOUNT_TYPE_NAMES.has(s.toLowerCase())],
   ["type", isJsTypeName],
   ["idtype", isJsTypeName],
   ["sampleidtype", isJsTypeName],
@@ -135,9 +171,18 @@ const isNumericSegment = (s) => /^\d+$/.test(s);
 // allowlist simply has not been told about yet (passes this test).
 const JS_IDENTIFIER_RE = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
-const describeKeyPath = (keyPath) => {
+// Renders a location for the throw message below. Fix round 4
+// (task-2-rereview-2.md, a real leak): this is ONLY ever handed ALREADY-
+// REDACTED path segments (see `safePath` in walk()). It used to be given the
+// raw, pre-redaction keyPath, so `{"Jane Roe": {unknownField: 1}}` threw an
+// Error whose message contained "Jane Roe" verbatim, and an email-shaped
+// ancestor key leaked the whole address - data that the normal output path
+// correctly pseudonymizes. Error messages get logged, pasted into reports
+// and committed, so the throw path is held to the same standard as the
+// output path.
+const describeKeyPath = (safePath) => {
   let out = "";
-  for (const seg of keyPath) {
+  for (const seg of safePath) {
     out += isNumericSegment(seg) ? `[${seg}]` : out ? `.${seg}` : seg;
   }
   return out || "(root)";
@@ -218,7 +263,15 @@ export function newRedactor() {
   // loudly, naming the key and its exact path, so record.mjs surfaces it
   // as a probe failure at record time instead of a mangled recording
   // discovered later.
-  const redactKey = (k, keyPath) => {
+  // `safePath` is the ancestor path with every segment ALREADY REDACTED (a
+  // pseudonym for a data-shaped ancestor key, the real text only for a
+  // structural or numeric one) - fix round 4, so the thrown message cannot
+  // leak an ancestor key the output path protects. The offending key itself
+  // is still named: it only reaches the throw when it is identifier-shaped
+  // (a data-shaped key returns above, pseudonymized, never throwing), and
+  // naming an unrecognized structural field is the entire point of this
+  // friction.
+  const redactKey = (k, safePath) => {
     if (isNumericSegment(k)) return k;
     if (STRUCTURAL_KEY_NAMES.has(k.toLowerCase())) return k;
 
@@ -229,7 +282,7 @@ export function newRedactor() {
     }
 
     throw new Error(
-      `redact(): unrecognized object key "${k}" at ${describeKeyPath([...keyPath, k])}. ` +
+      `redact(): unrecognized object key "${k}" at ${describeKeyPath([...safePath, k])}. ` +
         `This key is identifier-shaped, so it is almost certainly a structural field a ` +
         `probe emits, not personal data - add "${k.toLowerCase()}" to STRUCTURAL_KEY_NAMES ` +
         `in research/redact.mjs. If it can actually hold personal data, restructure the ` +
@@ -294,7 +347,12 @@ export function newRedactor() {
     return describeGeneric(s);
   };
 
-  const walk = (value, keyPath) => {
+  // `keyPath` holds the RAW key names and drives the key-context rules
+  // (a `name` under `mailboxes` must be matched by its real key text).
+  // `safePath` mirrors it with every segment already redacted and is used
+  // for nothing but the throw message in redactKey - fix round 4, see
+  // describeKeyPath above. The two arrays always have the same length.
+  const walk = (value, keyPath, safePath) => {
     const key = keyPath.at(-1);
 
     // Keep a live Date instance intact (review finding 1.12) - it is
@@ -310,12 +368,12 @@ export function newRedactor() {
       seen.add(value);
       try {
         if (Array.isArray(value)) {
-          return value.map((v, i) => walk(v, [...keyPath, String(i)]));
+          return value.map((v, i) => walk(v, [...keyPath, String(i)], [...safePath, String(i)]));
         }
         const out = {};
         const usedKeys = new Set();
         for (const [k, v] of Object.entries(value)) {
-          const redactedKey = redactKey(k, keyPath);
+          const redactedKey = redactKey(k, safePath);
           // Guarantee the key SET SIZE survives even under adversarial
           // collisions (review finding 1.13, `__proto__`, plus any
           // redaction-induced collision): never let two distinct original
@@ -330,7 +388,7 @@ export function newRedactor() {
           // named "__proto__" (review finding 1.13), dropping both key
           // and value.
           Object.defineProperty(out, candidate, {
-            value: walk(v, [...keyPath, k]),
+            value: walk(v, [...keyPath, k], [...safePath, candidate]),
             writable: true,
             enumerable: true,
             configurable: true,
@@ -347,7 +405,7 @@ export function newRedactor() {
     return redactStringValue(value, key, keyPath);
   };
 
-  return (value) => walk(value, []);
+  return (value) => walk(value, [], []);
 }
 
 export const redact = (value) => newRedactor()(value);

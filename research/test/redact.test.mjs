@@ -336,7 +336,14 @@ test("[Fix 1] every per-key validator rejects a personal-looking value and keeps
     ["mode", "-e"],
     ["chars", "ascii"],
     ["chars", "unicode"],
-    ["accountType", "personal"],
+    // Fix-round-4 note (task-2-rereview-2.md, Critical): this case used to
+    // be accountType="personal", which only survived because the old
+    // validator was the shape pattern /^[a-z]{1,12}$/ - "personal" is not
+    // an account type Mail ever reports, it was just a short lowercase
+    // word. accountType is now an enum, so the legitimate value here is a
+    // real member of it. The expectation changed because the rule it was
+    // asserting was itself the bug.
+    ["accountType", "imap"],
     ["type", "string"],
     ["idType", "number"],
     ["sampleIdType", "boolean"],
@@ -484,4 +491,170 @@ test("[Fix 5] the same string gets the same pseudonym whether it appears as a ke
   const emailInValue = outValue.match(/user\d+@example\.com/)[0];
   const emailAsKey = Object.keys(outKey)[0];
   assert.equal(emailAsKey, emailInValue);
+});
+
+// --- Fix round 4 (see task-2-rereview-2.md; all inputs fictional, and the
+// re-review's own exact leaking inputs where it named them) ---------------
+
+test("[Fix 6] accountType is an enum: a lowercase personal name no longer survives (re-review-2 Critical)", () => {
+  // The re-review's exact leaking inputs. Each is a plausible first name or
+  // surname that satisfied the old shape pattern /^[a-z]{1,12}$/ and so was
+  // published verbatim under an accountType key.
+  for (const leaking of ["jane", "roe", "janedoe"]) {
+    const r = newRedactor();
+    const out = r({ accountType: leaking });
+    assert.ok(
+      !JSON.stringify(out).includes(leaking),
+      `expected accountType="${leaking}" to be redacted, got ${JSON.stringify(out)}`
+    );
+    assert.match(out.accountType, /^<str len=\d+ chars=ascii>$/);
+  }
+});
+
+test("[Fix 6] every accountType enum member survives verbatim", () => {
+  for (const accountType of ["imap", "pop", "smtp", "icloud", "exchange", "unknown"]) {
+    const r = newRedactor();
+    assert.equal(r({ accountType }).accountType, accountType);
+  }
+});
+
+test("[Fix 6] accountType matching is case-insensitive on the value, preserving its original casing", () => {
+  // Mail's dictionary spells these iCloud/IMAP/POP; the enum is matched
+  // case-insensitively so real casing survives rather than being redacted
+  // for cosmetic reasons.
+  for (const accountType of ["IMAP", "iCloud", "Exchange", "POP", "Unknown"]) {
+    const r = newRedactor();
+    assert.equal(r({ accountType }).accountType, accountType);
+  }
+});
+
+test("[Fix 6] an off-enum accountType is redacted, not passed through", () => {
+  // The safe failure direction: an account type nobody has seen yet costs
+  // the archive one word of detail instead of publishing whatever the field
+  // actually held. Note "webmail" and "personal" are shape-legal for the
+  // old pattern (short, lowercase) and would both have survived it.
+  for (const offEnum of ["webmail", "personal", "carrier", "acmemail"]) {
+    const r = newRedactor();
+    const out = r({ accountType: offEnum });
+    assert.notEqual(out.accountType, offEnum);
+    assert.match(out.accountType, /^<str len=\d+ chars=ascii>$/);
+  }
+});
+
+test("[Fix 6] probe is the literal set of the project's 12 probe names", () => {
+  const probes = [
+    "00-hello", "01-argv-modes", "02-accounts", "03-mailboxes",
+    "04-message-props", "05-bulk-fetch", "06-whose-vs-bulk", "07-coldstart",
+    "08-gmail-inbox", "09-unicode-dates", "10-attachment-source", "11-errors",
+  ];
+  for (const probe of probes) {
+    const r = newRedactor();
+    assert.equal(r({ probe }).probe, probe);
+  }
+  // The re-review's exact leaking inputs: shape-legal under the old
+  // /^[0-9]{2}-[a-z0-9-]+$/ pattern, not a real probe name.
+  for (const leaking of ["20-jane-roe-notes", "05-personal-secret-abc"]) {
+    const r = newRedactor();
+    const out = r({ probe: leaking });
+    assert.ok(
+      !JSON.stringify(out).includes(leaking),
+      `expected probe="${leaking}" to be redacted, got ${JSON.stringify(out)}`
+    );
+  }
+});
+
+test("[Fix 7] the throw message does not leak a display-name ancestor key (re-review-2 leak)", () => {
+  // The re-review's exact input. "Jane Roe" is a data-shaped KEY: it never
+  // throws for itself (it is pseudonymized in the output), but the
+  // identifier-shaped unknownField nested beneath it does throw - and the
+  // message used to embed the raw ancestor key text verbatim.
+  const r = newRedactor();
+  let message;
+  assert.throws(
+    () => r({ "Jane Roe": { unknownField: 1 } }),
+    (err) => {
+      message = err.message;
+      return err instanceof Error;
+    }
+  );
+  assert.ok(!message.includes("Jane Roe"), `error message leaked the ancestor key: ${message}`);
+  assert.ok(!message.includes("Jane"), `error message leaked part of the ancestor key: ${message}`);
+  // The friction is preserved: the offending identifier-shaped key is still
+  // named, and so is a safe rendering of where it sits.
+  assert.ok(message.includes('"unknownField"'));
+  assert.match(message, /at redactedKey\d+\.unknownField/);
+});
+
+test("[Fix 7] the throw message does not leak an email-shaped ancestor key (re-review-2 leak)", () => {
+  const r = newRedactor();
+  let message;
+  assert.throws(
+    () => r({ "jane.roe@personalmail.com": { unknownField: 1 } }),
+    (err) => {
+      message = err.message;
+      return err instanceof Error;
+    }
+  );
+  assert.ok(!message.includes("jane.roe@personalmail.com"), `error message leaked the address: ${message}`);
+  assert.ok(!message.includes("jane.roe"), `error message leaked the local part: ${message}`);
+  assert.ok(!message.includes("personalmail"), `error message leaked the domain: ${message}`);
+  // The ancestor appears as its pseudonym - the same one the output path
+  // would have given it.
+  assert.match(message, /at user\d+@example\.com\.unknownField/);
+});
+
+test("[Fix 7] a data-shaped ancestor deep in the tree is redacted in the path, numeric segments intact", () => {
+  // Same leak, reached through a structural key and an array index, to
+  // prove every ancestor segment is redacted (not just a top-level one)
+  // while the structural and numeric segments still read literally - the
+  // path has to stay useful enough to find the offending field.
+  const r = newRedactor();
+  let message;
+  assert.throws(
+    () => r({ accounts: [{ "Jane Roe": { mailboxes: { unknownField: 1 } } }] }),
+    (err) => {
+      message = err.message;
+      return err instanceof Error;
+    }
+  );
+  assert.ok(!message.includes("Jane Roe"), `error message leaked the ancestor key: ${message}`);
+  assert.match(message, /at accounts\[0\]\.redactedKey\d+\.mailboxes\.unknownField/);
+});
+
+test("[Fix 7] a data-shaped offending key is pseudonymized, never thrown on", () => {
+  // The other half of the throw path: if the offending key is itself
+  // data-shaped it must be redacted rather than named in an error. Covers
+  // both data-shaped forms - one carrying an address (scrubbed through the
+  // shared pseudonym maps) and one that is a bare display name (no email
+  // pattern to match, so it gets an opaque key).
+  const r1 = newRedactor();
+  const out1 = r1({ "Jane Roe": 1 });
+  assert.deepEqual(Object.values(out1), [1]);
+  assert.ok(!JSON.stringify(out1).includes("Jane Roe"));
+  assert.match(Object.keys(out1)[0], /^redactedKey\d+$/);
+
+  const r2 = newRedactor();
+  const out2 = r2({ "jane.roe@personalmail.com": 1 });
+  assert.match(Object.keys(out2)[0], /^user\d+@example\.com$/);
+  assert.ok(!JSON.stringify(out2).includes("jane.roe@personalmail.com"));
+});
+
+test("[Fix 7] the throw still names an unknown identifier-shaped key and how to fix it", () => {
+  // The friction is the whole point of the throw: an unrecognized
+  // identifier-shaped key is almost certainly a real structural field
+  // nobody added to the allowlist yet, so the message must name it, name
+  // its (safe) location, and say what to do.
+  const r = newRedactor();
+  let message;
+  assert.throws(
+    () => r({ data: { someBrandNewProbeField: 42 } }),
+    (err) => {
+      message = err.message;
+      return err instanceof Error;
+    }
+  );
+  assert.ok(message.includes('"someBrandNewProbeField"'));
+  assert.match(message, /at data\.someBrandNewProbeField/);
+  assert.match(message, /STRUCTURAL_KEY_NAMES/);
+  assert.match(message, /research\/redact\.mjs/);
 });
