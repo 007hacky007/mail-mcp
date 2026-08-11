@@ -76,6 +76,9 @@ const PROBE_NAMES = new Set([
   "00-hello", "01-argv-modes", "02-accounts", "03-mailboxes",
   "04-message-props", "05-bulk-fetch", "06-whose-vs-bulk", "07-coldstart",
   "08-gmail-inbox", "09-unicode-dates", "10-attachment-source", "11-errors",
+  // 13th probe file (added Task 4, fix round 1): measures the message-size
+  // distribution instead of asserting it, per the review's Critical finding.
+  "12-message-sizes",
 ]);
 const VALUE_VALIDATORS = new Map([
   ["probe", (s) => PROBE_NAMES.has(s)],
@@ -161,6 +164,10 @@ const STRUCTURAL_KEY_NAMES = new Set([
   "longestsubjectchars", "dateisdateobject", "dateisoroundtrip",
   // research/probes/11-errors.js (Task 13)
   "badaccount", "badmailbox", "badmessageindex", "badproperty", "raised", "number",
+  // research/probes/12-message-sizes.js (Task 4, fix round 1) - measures the
+  // message-size distribution the section-4 Critical finding required
+  "fetchok", "fetcherror", "maxsizebytes", "mediansizebytes",
+  "over1mb", "over4mb", "over16mb", "over64mb",
 ]);
 
 const isNumericSegment = (s) => /^\d+$/.test(s);

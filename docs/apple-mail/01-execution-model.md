@@ -69,8 +69,15 @@ modes are equally safe on that front:
 ### The `--` discrepancy
 
 File mode and `-e` mode disagree about what `argv[0]` is. **Verified** -
-this is `research/probes/01-argv-modes.js`, run both ways (Task 1 Step 6;
-recorded as `research/results/01-argv-modes.json`), verbatim stdout:
+`research/probes/01-argv-modes.js`, run both ways (Task 1 Step 6). The
+literal values below are quoted verbatim from that step's terminal
+transcript in
+`.superpowers/sdd/2026-08-11-apple-mail-knowledge-archive/task-1-report.md`,
+not from `research/results/01-argv-modes.json`: that file holds only a
+single **file-mode** run (`runProbe` never invokes `-e` mode, so there is
+no `-e`-mode entry to find there at all) and, being a committed recording,
+has its `args`/`rawArgv` values redacted to placeholder descriptors rather
+than the literal `"one"`/`"two"`/`"--"` shown here:
 
 ```
 file mode:
@@ -230,15 +237,48 @@ shape.
 ## 4. Buffer limits: why 64 MB
 
 Node's `spawnSync`/`execSync` default `maxBuffer` is 1 MB. Exceeding it
-kills the child and sets `result.error` with code `ENOBUFS`. Mail message
-sources routinely exceed 1 MB - a raw MIME source with attachments, the
-full body of a long thread, a large `search`/`list` result set - so the
-1 MB default is not a generous margin, it is a guaranteed failure the first
-time anyone reads something realistic.
+kills the child and sets `result.error` with code `ENOBUFS`.
 
-`[unverified]` - mined from upstream, not reproduced here (this project has
-not yet recorded a message whose source exceeds 1 MB; that is planned for
-the attachments task). Upstream's own comment on why 64 MB specifically:
+**Verified.** Rather than assert how common a message over 1 MB is,
+`research/probes/12-message-sizes.js` bulk-fetches `messageSize()` (a
+Mail-reported size in bytes; fetching it for every message in a mailbox is
+one Apple Event, not one per message - a future document in this archive
+covers bulk property fetches in general) for an entire mailbox and reduces
+it to a distribution. Recorded against the largest enabled account's INBOX
+(`messageCount` 17,486; `research/results/12-message-sizes.json`):
+
+| Statistic | Value |
+|---|---|
+| Message count | 17,486 |
+| Median size | 8,077 bytes (about 8 KB) |
+| Maximum size | 26,711,953 bytes (about 25.5 MB) |
+| Over 1 MB | 138 (0.79%) |
+| Over 4 MB | 30 (0.17%) |
+| Over 16 MB | 7 (0.04%) |
+| Over 64 MB | 0 |
+
+This does not support "routinely exceed 1 MB" as a description of this
+mailbox: the typical message is about 8 KB, and fewer than one message in a
+hundred exceeds 1 MB. The honest framing the data supports is the opposite
+one - **large messages are rare, not routine, on this mailbox** - but the
+buffer still has to be raised anyway, for a different reason than
+frequency: rare is not the same as bounded. 138 messages already exceed
+1 MB on a single mailbox on this machine, and the maximum observed is 26.7
+MB, comfortably inside a 64 MB cap and comfortably past a 1 MB one. A
+`search`/`list` operation that touches this mailbox will eventually walk
+into one of those 138 (or one of the 7 past 16 MB), and at that point it
+does not matter that they are rare - the operation either has enough buffer
+headroom to read that one message or it fails with `ENOBUFS`, in exactly
+the misleading way described below. Sizing the buffer for the rare-but-real
+maximum, not the common case, is the correct call precisely because the
+common case was never the risk.
+
+`[unverified]` - mined from upstream, not reproduced here - for the parts
+of upstream's own reasoning this project has not independently measured:
+whether a 20 MB attachment is something upstream's users actually hit in
+practice (as opposed to anticipated it), and the exact "message not found" /
+"attachment not found" symptom text upstream reports resulted from the
+1 MB default. Upstream's own comment on why 64 MB specifically:
 
 > "Mail operations routinely exceed 1 MB - `getRawSource` reads the entire
 > raw MIME (a 20 MB attachment is explicitly anticipated), `getMessageContent`
@@ -279,10 +319,45 @@ configured - `SIGKILL` here because that is what this project's harness
 matters because `research/harness.mjs`'s very first check is
 `if (result.error) return { ok: false, ..., error: "spawn failed: ${result.error.message}" }`
 - a buffer overflow never reaches the `status`-based branch at all, and is
-reported with the same `"spawn failed: ..."` wording as the two failure
-modes in section 5's table below. The tail of the message (`ENOBUFS`) is
-the only thing distinguishing it, and nothing in the harness currently
-reads that tail.
+reported with the same `"spawn failed: ..."` wording as two other, genuinely
+different failure conditions. **Verified** - the same technique as the
+`ENOBUFS` command above, applied to a missing binary and a timeout:
+
+```
+$ node -e '
+const { spawnSync } = require("node:child_process");
+const enoent = spawnSync("this-binary-does-not-exist-xyz", [], { killSignal: "SIGKILL" });
+const timeout = spawnSync("sleep", ["5"], { timeout: 300, killSignal: "SIGKILL" });
+const fmt = (r) => ({ error: r.error && { message: r.error.message, code: r.error.code }, status: r.status, signal: r.signal });
+console.log(JSON.stringify({ enoent: fmt(enoent), timeout: fmt(timeout) }));
+'
+{"enoent":{"error":{"message":"spawnSync this-binary-does-not-exist-xyz ENOENT","code":"ENOENT"},"status":null,"signal":null},
+ "timeout":{"error":{"message":"spawnSync sleep ETIMEDOUT","code":"ETIMEDOUT"},"status":null,"signal":"SIGKILL"}}
+```
+
+| Condition | Trigger | `result.error.message` (tail) | `result.status` | `result.signal` | `research/harness.mjs`'s returned `error` |
+|---|---|---|---|---|---|
+| `osascript` not found / not executable | `spawnSync` cannot create the child at all | `... ENOENT` | `null` | `null` | `spawn failed: spawnSync osascript ENOENT` |
+| Process ran past `timeoutMs` | Node kills the child with `killSignal` once the timeout fires | `... ETIMEDOUT` | `null` | `SIGKILL` | `spawn failed: spawnSync osascript ETIMEDOUT` |
+| stdout+stderr exceeded `maxBuffer` | Node kills the child and reports the overflow | `... ENOBUFS` | `null` | `SIGKILL` | `spawn failed: spawnSync osascript ENOBUFS` |
+
+Three causes that have nothing in common - a binary that was never found, a
+process that ran and was deliberately killed for taking too long, and a
+process that ran and was deliberately killed for producing too much output
+- all reach `research/harness.mjs` through the exact same `result.error`
+branch and the exact same `"spawn failed: ..."` template. The word "spawn"
+is actively wrong for the second and third rows (the process did spawn; it
+was killed later, mid-run, possibly after dispatching work into Mail.app -
+see section 6 on why that matters). The only thing distinguishing the three
+today is the tail of a free-text string that happens to contain Node's own
+error code, which nothing in `research/harness.mjs` or its callers
+(`record.mjs`, `verify.mjs`) currently reads - they print the string as
+given. This is the harness-level half of the conflation the brief for this
+task named as a known, deferred finding (the other half being that this
+same collapse is what makes a wedged-osascript timeout read as indistinguishable
+from osascript never having launched); fixing it - adding a dedicated
+`kind`/`code` field instead of one flat string - is future work, not done
+by this document.
 
 ## 5. Timeouts, two levels
 
@@ -489,9 +564,10 @@ executed here. No probe in this project has triggered a real Mail.app
 failure and observed whether or how a retry behaves.
 
 Upstream's retry policy is opt-in, easy to miss on a first read:
-`DEFAULT_MAX_RETRIES = 1`, and the retry loop is `for (attempt = 1;
-attempt <= maxRetries; attempt++)` - with the default, that loop runs
-exactly once. No retry happens unless a caller explicitly raises
+`DEFAULT_MAX_RETRIES = 1`, and the retry loop is `for (let attempt = 1;
+attempt <= maxRetries; attempt++)` (`applescript.ts` line 387) - with the
+default, that loop runs exactly once. No retry happens unless a caller
+explicitly raises
 `maxRetries` (upstream's own comment suggests `3`, giving exponential
 backoff at 1s/2s). Whether to retry at all, when enabled, is decided purely
 by matching the error *text* against a fixed list of patterns:
@@ -543,10 +619,10 @@ either), not merely an implementation curiosity.
 
 - `research/harness.mjs` (this repository) - the harness whose contract
   sections 2-5 describe directly.
-- `research/probes/00-hello.js`, `01-argv-modes.js`, `07-coldstart.js` and
-  their recordings in `research/results/` - every claim in this document
-  marked verified without a separately quoted command is backed by one of
-  these three recordings.
+- `research/probes/00-hello.js`, `01-argv-modes.js`, `07-coldstart.js`,
+  `12-message-sizes.js` and their recordings in `research/results/` - every
+  claim in this document marked verified without a separately quoted
+  command is backed by one of these four recordings.
 - `.superpowers/sdd/2026-08-11-apple-mail-knowledge-archive/task-1-report.md`
   - the argv-fidelity and file-mode-vs-`-e` verification this document
     quotes verbatim rather than re-deriving.
