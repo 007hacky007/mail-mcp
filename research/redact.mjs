@@ -1,4 +1,9 @@
-const STANDARD_MAILBOXES = new Set([
+// Exported (fix round 1, task-5-review): research/record.mjs reuses this
+// exact set to decide whether a probe ARGUMENT is provably non-personal and
+// can be stored verbatim - see the comment on requireStorableArgs() there
+// for why a duplicate copy would be the wrong fix (two sets that can drift
+// apart is worse than one imported set).
+export const STANDARD_MAILBOXES = new Set([
   "INBOX", "Inbox", "Sent", "Sent Messages", "Sent Items", "Drafts",
   "Trash", "Deleted Messages", "Junk", "Spam", "Archive",
   "All Mail", "Important", "Starred", "[Gmail]", "[Google Mail]",

@@ -8,26 +8,80 @@
 // a subject or sender is personal data, so the committed recording only ever
 // shows an opaque descriptor, never the real value.
 //
-// timed()'s two branches are shape-identical on purpose - {ok, seconds, type,
-// sample, error}, always all five keys, `sample` always a string - which is a
-// deliberate change from this probe's first draft (matching the brief's
-// verbatim sketch), where the failure branch omitted `type`/`sample`
-// entirely and `sample` kept the property's native JS type (number/boolean)
-// on success. That asymmetry is exactly the fingerprint-noise trap this
-// project already knows to watch for (see research/probes/12-message-sizes.js's
-// header comment): research/verify.mjs replays a probe using the args AS
-// RECORDED, and record.mjs redacts account/mailbox names in args before
-// writing them to disk, so a verify run always calls this probe with
-// placeholder strings, not the real account/mailbox name. `Mail.accounts.byName`
-// on a placeholder does not throw immediately (see the object-model doc), but
-// every subsequent `m.xxx()` call inside a `timed()` wrapper does, so a
-// verify replay flips EVERY property in this probe from the success shape to
-// the failure shape at once. With the original two-shape design that made
-// every single property report a spurious mismatch, 100% reproducibly, on
-// every verify run - not a rare edge case. Reduced here to one shape so
-// verify.mjs is comparing "did Mail's object model change" against a fixed
-// point, not "did this call happen to succeed this time."
+// Fix round 1 (task-5-review, the CRITICAL finding): this probe takes an
+// ACCOUNT SELECTOR, never a raw account name, as its first argument - see
+// resolveAccount() below. research/record.mjs now only stores a probe
+// argument verbatim when it is provably non-personal (a decimal index, a
+// known selector keyword, or a standard mailbox name) and REFUSES to record
+// anything else - it used to silently redact a raw account name into an
+// opaque placeholder instead, which research/verify.mjs then replayed
+// VERBATIM on every future run. `Mail.accounts.byName("<str len=5 chars=
+// ascii>")` resolves to nothing real, but does not throw immediately (JXA
+// specifiers resolve lazily); every subsequent `m.xxx()` call inside
+// timed() then failed, and because timed()'s failure branch is (correctly,
+// separately) shape-stable, the WHOLE probe's shape still matched its
+// recording. `research/verify.mjs` reported 7/7 while never touching real
+// Mail data for this probe on replay - a false pass, not a fix. The
+// resolved account's real name is still reported, as `accountName` below,
+// through the SAME "accountname" redaction rule this project already uses
+// elsewhere - so the recording documents which account was actually
+// measured without the selector argument itself ever being personal.
+//
+// timed()'s two branches are shape-identical on purpose - {ok, seconds,
+// type, sample, error}, always all five keys, `sample` always a string.
+// This is a SEPARATE, real fingerprint-noise trap (the original failure
+// branch omitted `type`/`sample` entirely) and is kept regardless of the
+// fix above, as defensive shape design for any property this probe cannot
+// read for some other reason even with a resolvable selector.
 function argsOf(argv) { return argv[0] === "--" ? argv.slice(1) : argv; }
+
+// Resolves an account selector against the live account list - see the
+// header comment above for why this exists instead of taking a raw account
+// name. Supports exactly three forms:
+//   - a decimal string: a zero-based index into Mail.accounts()
+//   - "largest-enabled": the enabled account with the most messages in its INBOX
+//   - "gmail-style": the enabled account exposing an "All Mail" mailbox
+// Throws if the selector cannot be resolved, deliberately: a probe that
+// cannot resolve its own selector should fail loudly (a whole-probe
+// failure, visible to research/verify.mjs as "probe did not run"), not
+// silently produce an unrelated per-property failure shape.
+function resolveAccount(Mail, selector) {
+  const accounts = Mail.accounts();
+  if (/^\d+$/.test(selector)) {
+    const idx = Number(selector);
+    if (idx >= accounts.length) {
+      throw new Error(`account selector index ${idx} is out of range (0..${accounts.length - 1})`);
+    }
+    return accounts[idx];
+  }
+  if (selector === "largest-enabled") {
+    let best = null;
+    let bestCount = -1;
+    for (const a of accounts) {
+      let enabled = false;
+      try { enabled = a.enabled(); } catch (e) { enabled = false; }
+      if (!enabled) continue;
+      let count = -1;
+      try { count = a.mailboxes.byName("INBOX").messages.length; } catch (e) { count = -1; }
+      if (count > bestCount) { bestCount = count; best = a; }
+    }
+    if (!best) throw new Error('selector "largest-enabled": no enabled account with a readable INBOX was found');
+    return best;
+  }
+  if (selector === "gmail-style") {
+    for (const a of accounts) {
+      let enabled = false;
+      try { enabled = a.enabled(); } catch (e) { enabled = false; }
+      if (!enabled) continue;
+      try {
+        a.mailboxes.byName("All Mail").name();
+        return a;
+      } catch (e) { /* not this one */ }
+    }
+    throw new Error('selector "gmail-style": no enabled account exposing an "All Mail" mailbox was found');
+  }
+  throw new Error(`unknown account selector "${selector}"`);
+}
 
 function timed(fn) {
   const t0 = $.NSDate.date;
@@ -52,11 +106,15 @@ function timed(fn) {
 }
 
 function run(argv) {
-  const [accountName, mailboxName] = argsOf(argv);
+  const [accountSelector, mailboxName] = argsOf(argv);
   const Mail = Application("Mail");
-  const box = Mail.accounts.byName(accountName).mailboxes.byName(mailboxName);
+  const account = resolveAccount(Mail, accountSelector);
+  const box = account.mailboxes.byName(mailboxName);
   const m = box.messages[0];
+  let accountName;
+  try { accountName = account.name(); } catch (e) { accountName = "<unreadable>"; }
   return JSON.stringify({
+    accountName: accountName,
     props: {
       id: timed(() => m.id()),
       messageId: timed(() => m.messageId()),

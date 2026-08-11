@@ -296,16 +296,89 @@ The common expectation for a Gmail-backed account (Account B here) is a
 mailboxes, including its `INBOX` and `Spam`, sit at depth 0 with no
 grouping container above them; the one nested mailbox found is an
 ordinarily-named subfolder nested under an unrelated top-level folder, not
-a Gmail construct. `[unverified]` whether this is a property of this
-specific Gmail account's folder configuration, of how this Mail.app version
-presents Gmail IMAP folders, or something else - a future task
-(`08-quirks-and-traps.md`, which already reserves probe fields for exactly
-this - `isGmailStyle`, `literalInbox`, `allMail`, `containerNames`) is where
-Gmail-specific structure gets its own dedicated measurement. The concrete,
-load-bearing fact for *this* document is narrower and fully verified: this
-probe's generic recursive walk needs no Gmail-specific logic at all, and a
-document that assumed a `[Gmail]` container would exist and coded around
-it would have coded around something that, on real hardware, is not there.
+a Gmail construct.
+
+### This directly contradicts this project's own design spec - flagged, not softened
+
+`docs/superpowers/specs/2026-08-11-mail-mcp-design.md` (this project's
+pre-archive design document, written from reading upstream, not from
+independent measurement) states, in its table describing what
+`08-quirks-and-traps.md` will cover:
+
+> "Gmail's virtual INBOX (the literal `INBOX` holds roughly nothing; real
+> mail lives in `All Mail` and `Important`, nested inside a `[Gmail]`
+> container so a flat mailbox lookup does not find them)."
+
+Three separate, checkable claims are packed into that one sentence, and
+this task's measurements bear on all three - **verified, on this specific
+Gmail-style account, on this machine, right now:**
+
+1. **"The literal `INBOX` holds roughly nothing."** Measured directly
+   (`research/results/03-mailboxes.json`, and confirmed again in this fix
+   round via the `largest-enabled` selector - see below): this account's
+   `INBOX` holds **52,143 messages** - not only "not roughly nothing," it
+   is the single largest INBOX of any account on this machine, larger than
+   the other enabled account's 17,487-message INBOX that this document's
+   message-property measurements are based on.
+2. **"Real mail lives in `All Mail`... nested inside a `[Gmail]`
+   container."** Measured directly, twice: the full recursive mailbox walk
+   (`research/probes/03-mailboxes.js`) never encountered a literal `[Gmail]`
+   mailbox anywhere in this account's tree (a standard name, so it would
+   have survived redaction and appeared verbatim in the recording if
+   present - it did not); and, testing the specific claim more precisely in
+   this fix round, `account.mailboxes.byName("All Mail")` **fails outright**
+   on this account - `Error: Can't get object.` - not merely "not flat," but
+   not found at all, at any depth, by that name.
+3. **"So a flat mailbox lookup does not find them."** This framing implies
+   a *nested* lookup would succeed where a flat one fails. That is not what
+   was tested here, but it is hard to square with fact 2: there is no
+   literal `[Gmail]` mailbox for a nested lookup to descend into in the
+   first place on this account.
+
+**This is a real, measured contradiction, not a probe artifact.** Both
+enabled accounts were checked, not just the Gmail-style one - **verified**:
+
+```
+$ osascript -l JavaScript -e '
+function run() {
+  const Mail = Application("Mail");
+  const out = [];
+  for (const a of Mail.accounts()) {
+    let enabled;
+    try { enabled = a.enabled(); } catch (e) { enabled = null; }
+    if (!enabled) continue;
+    let allMailOk, allMailErr;
+    try { a.mailboxes.byName("All Mail").name(); allMailOk = true; }
+    catch (e) { allMailOk = false; allMailErr = String(e).slice(0,60); }
+    out.push({ allMailOk, allMailErr });
+  }
+  return JSON.stringify(out);
+}
+'
+[{"allMailOk":false,"allMailErr":"Error: Can't get object."},
+ {"allMailOk":false,"allMailErr":"Error: Can't get object."}]
+```
+
+Neither of the two enabled accounts on this machine exposes a mailbox
+literally named `All Mail`, reachable by that name, at all. Per this
+task's coordinator's explicit instruction: **this measurement is kept as
+measured, and the spec's claim is kept as written - both stay in the
+archive, flagged as in direct conflict, rather than editing either to
+agree with the other.** `[unverified]` why the discrepancy exists - whether
+it is specific to this Gmail account's IMAP folder subscription settings
+(Gmail lets a user hide folders like `[Gmail]/All Mail` from IMAP
+entirely), specific to how this Mail.app version presents Gmail folders,
+or something the design spec's own upstream source got wrong in the first
+place - resolving this is explicitly `08-quirks-and-traps.md`'s job (a
+later task, which already reserves probe fields for exactly this -
+`isGmailStyle`, `literalInbox`, `allMail`, `containerNames`), not this
+document's. The concrete, load-bearing fact for *this* document, unaffected
+by which explanation turns out to be right: this probe's generic recursive
+walk needs no Gmail-specific logic at all to enumerate every mailbox this
+account actually has, and a document (or a `gmail-style` account selector -
+see below) that assumed a `[Gmail]` container or an `All Mail` mailbox
+would exist and coded around it would have coded around something that, on
+this real account, is not there.
 
 Whole-probe cost: **29.941s** to walk all 5 accounts (61 total mailbox
 entries across the two enabled accounts; the three disabled accounts
@@ -393,8 +466,10 @@ refused with an error naming every candidate."
 
 **Verified** - `research/probes/04-message-props.js`, recorded as
 `research/results/04-message-props.json` (`node research/record.mjs
-04-message-props "<enabled account>" INBOX`). This probe reads **one**
-message (`box.messages[0]`) and times each property individually,
+04-message-props 0 INBOX` - see "Probe arguments are selectors, never raw
+names" below for what `0` means and why this changed from an earlier draft
+of this document, which took a raw account name here). This probe reads
+**one** message (`box.messages[0]`) and times each property individually,
 deliberately not bulk-fetched - see the callout after the table for why
 that choice changes the entire result.
 
@@ -422,22 +497,30 @@ that choice changes the entire result.
 
 The natural expectation - stated in this task's own brief before the probe
 ran - was "most properties are milliseconds; `source` is the expensive
-one." **Measurement, repeated three times against the same 17,486-message
-INBOX, refutes this cleanly:**
+one." **Measurement, repeated four times against the same account's
+17,486-to-17,487-message INBOX (the small count drift between runs is real
+mail arriving on a live mailbox between measurements taken hours apart, not
+noise in the method), refutes this cleanly:**
 
 | Run | Range across all 17 properties | `id` | `source` (via `sourceLength`) |
 |---|---|---|---|
-| Committed recording (`research/results/04-message-props.json`) | 0.480s - 2.366s | 1.697s | 0.735s |
-| Ad-hoc confirmation run 1 | 1.489s - 3.217s | 1.789s | 1.712s |
-| Ad-hoc confirmation run 2 | 1.383s - 1.987s | 1.458s | 1.692s |
+| Committed recording (`research/results/04-message-props.json`, selector `0`, fix round 1) | 0.742s - 1.451s | 0.959s | 1.052s |
+| Ad-hoc run, before the selector fix (same account, raw name) | 0.480s - 2.366s | 1.697s | 0.735s |
+| Ad-hoc run, before the selector fix | 1.489s - 3.217s | 1.789s | 1.712s |
+| Ad-hoc run, before the selector fix | 1.383s - 1.987s | 1.458s | 1.692s |
 
-In every run, `source` sits comfortably inside the same range as trivial,
-tiny properties like `id`, `flagIndex`, and `attachmentCount` - it is never
-the outlier. The dominant cost is not the property being read; it is
-resolving `box.messages[0]` - an *index specifier* - against a mailbox with
-17,486 messages, paid again on every single top-level property call inside
-this probe's `run()`, because JXA does not cache that resolution between
-separate synchronous calls in the same script.
+All four runs measure the exact same real account and mailbox (this
+document's "Account A" throughout) - only the calling convention changed
+between the first row and the other three (see "Probe arguments are
+selectors, never raw names" below), not the target. In every run, `source`
+sits comfortably inside the same range as trivial, tiny properties like
+`id`, `flagIndex`, and `attachmentCount` - it is never the outlier, and the
+four runs' ranges overlap heavily rather than clustering around
+dramatically different values. The dominant cost is not the property being
+read; it is resolving `box.messages[0]` - an *index specifier* - against a
+mailbox with roughly 17,500 messages, paid again on every single top-level
+property call inside this probe's `run()`, because JXA does not cache that
+resolution between separate synchronous calls in the same script.
 
 **Confirmed directly** by running the identical probe against a 3-message
 mailbox (`Drafts`) in the same account instead of the 17,486-message
@@ -459,17 +542,169 @@ this object model - it is a function of how the message is reached:**
 | Reach pattern | Cost (this machine) | Source |
 |---|---|---|
 | Single-index specifier (`messages[0]`), small mailbox (3 messages) | 8-68 ms per property | ad-hoc run above |
-| Single-index specifier (`messages[0]`), large mailbox (17,486 messages) | 0.48-3.2s per property, uniformly - no property is a clear outlier | this section's three runs |
-| Bulk array fetch (`mailbox.messages.messageSize()`), same 17,486-message mailbox, all messages at once | 2.064s **total**, for **all 17,486** values - about 0.12ms per message | `research/results/12-message-sizes.json` (Task 4's recording; cited, not re-measured here) |
+| Single-index specifier (`messages[0]`), medium mailbox (~17,500 messages) | 0.48-3.2s per property, uniformly - no property is a clear outlier | this section's four runs |
+| Single-index specifier (`messages[0]`), larger mailbox (52,143 messages, the `largest-enabled` account - see below) | **did not complete inside a 240-second timeout, for all 17 properties combined** | ad-hoc run, this fix round (`spawnSync osascript ETIMEDOUT` after 240.0s) |
+| Bulk array fetch (`mailbox.messages.messageSize()`), the ~17,500-message mailbox, all messages at once | 1.211s-2.064s **total** across two separate measurements, for **all ~17,500** values - about 0.07-0.12ms per message | `research/results/12-message-sizes.json` (this fix round, selector `0`) and Task 4's original recording of the same account, cited for comparison |
+| Bulk array fetch, the 52,143-message mailbox, all messages at once | **40.4s-53.0s total** across two separate measurements, for all 52,143 values - about 0.77-1.02ms per message | two ad-hoc runs, this fix round (same `runProbe` call as the `largest-enabled` demonstration below, run twice) |
 
-The last row is the most important number in this document: reading one
-property for one message via an index specifier on this mailbox costs
-roughly **13,000 to 19,000 times more per message** than reading the same
-property for every message via a bulk array fetch (about 1.5-2.4 seconds
-for 1 message versus about 0.00012 seconds per message in a fetch of
-17,486). This previews, but does not replace, the dedicated measurement a
-later document (`05-search.md`, Task 6) makes of bulk fetch versus `whose`
-- see section 6.
+**Correcting a mistake made and caught while writing this very section:** an
+earlier draft of this table stated the 52,143-message bulk fetch at
+"1.211s total" - that number is real, but it is Task 4's *other* account
+(~17,500 messages), copied into the wrong row while writing this update.
+The actual 52,143-message bulk-fetch timing, re-measured directly rather
+than trusted from memory, was 40.398s on a first run - given, at that
+point, as a single number. Re-running the identical command a second time
+while preparing the selector demonstration below returned 53.011s instead,
+a genuine ~30% difference for the identical operation on the identical
+mailbox minutes apart - so the range above (40.4s-53.0s), not a single
+point value, is what this document actually reports, once both numbers
+were in hand rather than trusting the first one as representative. Left in
+as a visible, narrated correction rather than silently fixed twice over,
+because "an inherited, half-remembered, or under-sampled number stated as
+measured fact" is the exact failure category this whole archive exists to
+catch, and this document is not exempt from making that mistake itself -
+twice, in the same paragraph, while writing about exactly this problem.
+
+**With the correct numbers, the bulk-fetch row tells its own, smaller
+version of the same story as the single-index rows.** ~17,500 to 52,143
+messages is roughly a 3x increase in mailbox size; 1.2-2.1s to 40.4-53.0s is
+roughly a 19x-44x increase in bulk-fetch time - worse than linear, though
+nowhere near as catastrophic as the single-index case's jump from
+"seconds" to "did not finish in 240 seconds" for the same 3x size increase.
+Both directions degrade worse than proportionally as the mailbox grows;
+they simply start from very different baselines. Bulk fetch is not immune
+to mailbox size, it is just far more resilient to it. `[unverified]` the
+exact scaling curve for either pattern - two or three data points each is
+not enough to fit a curve, only enough to reject "constant" and "linear"
+as descriptions and confirm "worse than linear" qualitatively for both.
+
+**The comparison that matters most for tool design:** reading one property
+for one message via an index specifier on the ~17,500-message mailbox
+costs roughly **13,000 to 19,000 times more per message** than reading the
+same property for every message via a bulk array fetch on that same
+mailbox (about 1.5-2.4 seconds for 1 message versus about 0.0001 seconds
+per message in bulk) - and per the rows above, that gap does not merely
+persist but *widens* on the larger mailbox: the single-index side goes
+from "seconds" to "does not finish," while the bulk side goes from
+fractions of a second to tens of seconds, still trivially usable. **A
+design relying on single-index message access must never assume its cost
+is bounded by a constant, or even by anything better than "eventually
+prohibitive," as a mailbox grows** - see `05-search.md` for how this
+project's tools avoid this shape of access entirely, and see "Probe
+arguments are selectors, never raw names" below for the exact `largest-enabled`
+measurement these numbers come from.
+
+### The two selector keywords, demonstrated directly
+
+The numbers above for the 52,143-message mailbox come from the
+`largest-enabled` selector, run twice through `research/harness.mjs`
+directly (not through `record.mjs`, so nothing overwrote the committed
+`index 0` recordings) and manually redacted before printing, the same
+standard this document uses for every other ad-hoc command. **Verified:**
+
+```
+$ node -e '
+import("./research/harness.mjs").then(async ({ runProbe }) => {
+  const { redact } = await import("./research/redact.mjs");
+  const r = runProbe("12-message-sizes", ["largest-enabled", "INBOX"]);
+  console.log(JSON.stringify(redact(r.data)), "seconds:", r.seconds);
+});
+'
+{"fetchOk":true,"fetchError":"<str len=0 chars=ascii>","accountName":"Account A",
+ "messageCount":52143,"maxSizeBytes":34284502,"medianSizeBytes":14941,
+ "over1MB":912,"over4MB":282,"over16MB":39,"over64MB":0} seconds: 40.398181833
+```
+
+(run a second time, minutes later, to get the range quoted above: identical
+`accountName`, `messageCount`, and every size statistic; `seconds:
+53.010752041` instead of `40.398181833` - the only thing that changed.
+**The `"Account A"` pseudonym shown here is a labeling trap, called out
+explicitly rather than silently corrected:** `redact()` assigns pseudonyms
+in first-seen order *within one call*, not globally and not by which real
+account it is - this isolated command's `redact()` call sees exactly one
+account name, so it always lands in the first slot, "Account A," regardless
+of which real account that name belongs to. It does **not** correspond to
+this document's own "Account A" (the 32-mailbox, ~17,500-message account)
+used everywhere else in this document. The account measured here is
+genuinely the one this document elsewhere calls **Account B** - confirmed
+by the message count alone: 52,143 matches Account B's `INBOX`, not
+Account A's ~17,500.)
+
+`largest-enabled` correctly resolved to the account with 52,143 `INBOX`
+messages - the account this document calls **Account B** (the Gmail-style
+account with 27 mailboxes, per section 3) - **not** the account this
+document calls Account A (32 mailboxes, ~17,500 `INBOX` messages), which
+an earlier, informal description in this document's own history called
+"the largest enabled account" by mailbox *count*. That earlier phrase was
+imprecise in a way that mattered once a selector had to encode it exactly:
+by mailbox count, Account A is larger (32 vs. 27); by `INBOX` message
+count - the definition this fix round's selector actually implements -
+Account B is larger, by a wide margin (52,143 vs. ~17,500). Both facts are
+true; they are just about different measures of "largest," and this
+document now says which one `largest-enabled` means rather than leaving it
+ambiguous.
+
+`gmail-style`, tested the same way, throws on this machine - **verified**,
+and consistent with the section 3 contradiction above:
+
+```
+$ node -e '
+import("./research/harness.mjs").then(({ runProbe }) => {
+  const r = runProbe("04-message-props", ["gmail-style", "INBOX"]);
+  console.log("ok:", r.ok, "| error (script path prefix stripped):",
+    r.error.replace(/^.*04-message-props\.js:\s*/, ""));
+});
+'
+ok: false | error (script path prefix stripped): execution error: Error:
+Error: selector "gmail-style": no enabled account exposing an "All Mail"
+mailbox was found (-2700)
+```
+
+(`r.error`'s real, unedited text is prefixed with this script's own
+absolute filesystem path, which - unlike everything else quoted in this
+archive - is stripped here rather than shown verbatim, since it necessarily
+contains this machine's local username as a path segment; every other
+detail of the message, including the exact error text and the `(-2700)`
+AppleEvent code, is otherwise unedited.)
+
+This is the resolver working exactly as designed, not a bug in it: neither
+enabled account exposes a mailbox literally named `All Mail` (section 3),
+so `gmail-style` correctly has nothing to resolve to, and fails loudly
+(a whole-probe failure, visible to `research/verify.mjs` as "probe did not
+run") rather than silently returning a plausible-looking wrong answer.
+`12-message-sizes.js` wraps its own `resolveAccount` call in the existing
+try/catch instead, so the *same* failure there produces the graceful
+`fetchOk: false` result its design has always used for a bad account or
+mailbox name - demonstrated directly, and safely (no personal data - the
+`accountName` field is a redacted pseudonym of the empty string this
+probe's own default value produces when resolution fails before an account
+was ever found, not a real name):
+
+```
+$ node -e '
+import("./research/harness.mjs").then(async ({ runProbe }) => {
+  const { redact } = await import("./research/redact.mjs");
+  const r = runProbe("12-message-sizes", ["gmail-style", "INBOX"]);
+  console.log(JSON.stringify(redact(r.data)));
+});
+'
+{"fetchOk":false,"fetchError":"<str len=90 chars=ascii>","accountName":"Account A",
+ "messageCount":0,"maxSizeBytes":-1,"medianSizeBytes":-1,"over1MB":-1,
+ "over4MB":-1,"over16MB":-1,"over64MB":-1}
+```
+
+(The `"Account A"` pseudonym shown here is an artifact of this one-off
+command's own, separate redaction pass being handed only the empty string
+`accountName` defaults to before resolution ever succeeds - it does not
+correspond to this document's "Account A" elsewhere; `pseudoAccount()`
+assigns labels per `redact()` call, in first-seen order within that call,
+not globally, so a lone or empty value being the first thing redacted in
+an isolated command gets whatever label is first in sequence regardless of
+which real account, if any, it came from.)
+
+Neither ad-hoc command above touched the committed `research/results/`
+recordings, which remain the `index 0` (Account A) measurements described
+throughout this document.
 
 ### The `source`/`content` warning, restated correctly
 
@@ -490,55 +725,129 @@ this one message was small. The buffer-limit reasoning in
 `01-execution-model.md` section 4 - sized for the rare-but-real maximum,
 not the common case - applies here without change.
 
-### A fingerprint-noise trap this task found and fixed inside its own probe
+### Probe arguments are selectors, never raw names - a false pass, found and fixed
 
-This project's redaction/verification machinery
-(`research/redact.mjs`/`research/verify.mjs`) is explicitly designed to
-warn about a property that "sometimes serializes as `null` and sometimes
-is omitted entirely" producing spurious shape mismatches. Building this
-section's own probe surfaced exactly that trap, concretely, not
-hypothetically:
+An earlier draft of this document (and this probe) reported `verify.mjs`
+at `7/7` after fixing a real but *smaller* problem: the `timed()` helper's
+failure branch used to have a different key set from its success branch
+(`{ok, seconds, error}` versus `{ok, seconds, type, sample}`), so a
+property read that happened to fail reported a different shape than one
+that succeeded. That fix (both branches now emit the identical five keys,
+`sample` always coerced to a string) was real and is kept - but it treated
+a **symptom** of a **much more serious defect**, which this section now
+documents in full because catching it is the actual point of this fix
+round.
 
-The `timed()` helper's original (brief-verbatim) failure branch was
-`{ ok: false, seconds, error }` - three keys - while its success branch was
-`{ ok: true, seconds, type, sample }` - four different keys. Both branches
-are individually reasonable. The problem is that `research/verify.mjs`
-replays a probe using its **recorded, already-redacted `args`** -
-`record.mjs` redacts non-standard account/mailbox names in `args` before
-writing them to disk (see `research/redact.mjs`), so a verify run for this
-probe always calls it with an opaque placeholder string like
-`"<str len=5 chars=ascii>"`, never the real account/mailbox name.
-`Mail.accounts.byName(placeholder)` does not throw immediately in JXA (it
-resolves lazily), but every subsequent `m.xxx()` property call inside
-`timed()` then throws - which flips **every single property, on every
-verify run, with certainty** from the success shape to the failure shape.
-Running `node research/verify.mjs` against the brief-verbatim version of
-this probe reproduced exactly that, for real:
+**The defect: `research/verify.mjs` reported `7/7` while never once
+touching real Mail data for this probe, or for `12-message-sizes.js`, on
+any replay.** `record.mjs` redacts a probe's *output* (`data`) with
+`redact()` - correct, `data` is never re-executed, only read. But the
+original version of `record.mjs` redacted a probe's *arguments* (`args`)
+the exact same way - and `research/verify.mjs` **replays a recorded probe
+with its stored `args`, verbatim**, because reproducing the exact call is
+the entire point of recording it. A raw account name is not a standard
+mailbox name, so it does not survive `redact()`'s passthrough rules; it
+became an opaque placeholder like `"<str len=5 chars=ascii>"` in the
+committed recording. Every future `verify.mjs` run then called
+`Mail.accounts.byName("<str len=5 chars=ascii>")` - a specifier that
+resolves lazily and does not throw immediately, so the failure surfaced
+one call later, inside `timed()`'s per-property try/catch, which (once the
+shape-symmetry fix above was applied) reported a clean, shape-stable,
+**completely fabricated** result: `ok: false` for every one of 17
+properties, every single time, with total certainty, since
+a placeholder resolves to nothing real on every machine, always. The
+symmetric shape fix made this failure LOOK like a normal recorded shape
+instead of a screaming inconsistency, which is precisely how it slipped
+past a naive `7/7`.
+
+**Reproduced directly, on this machine, using the actual committed files
+from before this fix round** (the previous commit's probe and recording,
+retrieved via `git show` into a scratch location, replayed with its own
+stored placeholder args exactly as `verify.mjs` does):
 
 ```
-FAIL 04-message-props:
-  props.attachmentCount.sample: missing (was number)
-  props.attachmentCount.type: missing (was string)
-  props.attachmentCount.error: added (string)
-  ... (repeated for all 17 properties)
-6/7 probes match their recorded shape
+total ok-flags found: 17
+all false? true
 ```
 
-Fixed by making both branches of `timed()` emit the identical key set with
-values of the identical JS type regardless of outcome - `{ok, seconds,
-type, sample, error}`, always all five keys, `sample` always coerced to a
-string (`String(value)` rather than passing a number/boolean through
-natively) so its type cannot vary by property or by success/failure. No
-change to `research/redact.mjs`'s allowlist was needed - all five keys were
-already present, since the brief's own design already anticipated most of
-them. After the fix: `node research/verify.mjs` reports `7/7`. The general
-lesson, stated for whoever writes the next probe: a timing/attempt wrapper
-used inside a probe must emit a shape-stable result on both its success and
-failure branches, or the probe's shape becomes a function of whether *this
-particular replay's inputs happened to succeed* rather than of the object
-model - defeating the entire purpose of a shape-based regression check. See
-also `research/probes/12-message-sizes.js`'s header comment, which
-independently documents the same lesson for a different probe.
+All seventeen `ok` flags - one per property - were `false`. The shape
+still matched, because the shape was never the thing that was wrong.
+`research/verify.mjs` was, before this fix round, structurally incapable
+of catching this: comparing `typeof true` to `typeof false` (both
+`"boolean"`) can never reveal that one is a real success and the other is
+a caught exception with no data behind it. **This is what "the archive's
+trust contract" actually means in the worst case: a green checkmark that
+verifies nothing, printed with total confidence, in this project's own
+verification tooling - not just in a claim mined from upstream.**
+
+**The fix has three parts, all now in place:**
+
+1. **Probes take an account SELECTOR, never a raw account name.**
+   `research/probes/04-message-props.js` and `research/probes/12-message-sizes.js`
+   each define `resolveAccount(Mail, selector)`, supporting exactly three
+   forms: a decimal string (a zero-based index into `Mail.accounts()`), the
+   keyword `"largest-enabled"` (the enabled account with the most messages
+   in its `INBOX`), and the keyword `"gmail-style"` (the enabled account
+   exposing an `All Mail` mailbox - which, per this document's section 3,
+   currently resolves to *no* account on this machine; `resolveAccount`
+   throws in that case, which is the correct, loud behavior, not a bug in
+   the resolver). The resolved account's real name is still reported in the
+   output, as `accountName`, through the same `"accountname"` redaction
+   rule this project already uses elsewhere - so a recording still
+   documents which account was measured without the *argument* ever being
+   personal.
+2. **`record.mjs` now refuses to store an argument it cannot prove is
+   non-personal, instead of redacting it.** A decimal integer, one of the
+   two selector keywords above, or a name in `redact.mjs`'s own (now
+   exported) `STANDARD_MAILBOXES` set is stored **verbatim**; anything else
+   makes `record.mjs` exit with an error naming the argument's *position*
+   (never its text, to avoid the refusal message itself becoming a leak)
+   and telling the probe author to add a selector. Verified directly, this
+   fix round: `node research/record.mjs 02-accounts "NotASelectorOrMailbox"`
+   refuses and writes nothing (confirmed via a file checksum taken before
+   and after - unchanged), while a real account/mailbox selector like `0
+   INBOX` is stored and used exactly as given.
+3. **`research/verify.mjs` itself now checks for this failure mode
+   generically**, not just for these two probes. It scans a live replay's
+   data for every boolean field whose key is exactly `"ok"` or ends in
+   `"Ok"` (covers this project's two conventions, `{ok: ...}` and
+   `{fetchOk: ...}`); if at least one such field exists anywhere and
+   **every** one of them is `false`, it refuses to call that a match,
+   regardless of what the shape comparison says. A probe with a genuine
+   mix of successes and failures is not flagged - only a replay that
+   touched real Mail data nowhere at all is. Re-running the exact
+   reproduction above through this new check in the actual
+   `research/verify.mjs` (not a reimplementation) confirms it fires with
+   the intended message:
+
+   ```
+   FAIL 04-message-props: shape matches, but this replay reached only
+   failure paths (every "*ok" flag in the live data is false) - this
+   proves the recorded shape is stable, not that Mail's object model was
+   actually exercised. Args used: ["<str len=5 chars=ascii>","<str len=5 chars=ascii>"]
+   ```
+
+**After all three parts of the fix, both probes were re-recorded with real
+selectors** (`node research/record.mjs 04-message-props 0 INBOX` and
+`node research/record.mjs 12-message-sizes 0 INBOX`) and `node
+research/verify.mjs` now reports `7/7` **with every property in
+`04-message-props` showing `ok: true` and real timings, and `12-message-sizes`
+showing `fetchOk: true` with real distribution numbers** - not the
+failure path. This is the difference between the two claims "verify.mjs
+says 7/7" and "verify.mjs's 7/7 means something": only the second one is
+now true, and it was not true before this fix round, in this project's own
+tooling, for two of its seven probes.
+
+The general lesson, for whoever writes the next probe or the next
+verification layer in any project: **a value that must be replayed exactly
+(an argument, a cache key, anything fed back into the system under test)
+cannot go through the same lossy redaction as a value that will only ever
+be read.** The two have different correctness requirements - a
+descriptor is a fine stand-in for something read once and discarded, and a
+liability for something that gets re-executed - and a redaction layer that
+does not distinguish them will eventually produce exactly this failure
+mode: a verification step that reports success because it stopped being
+able to fail informatively, not because it stopped being able to fail.
 
 ## 5. Message identity, in full
 
@@ -676,7 +985,7 @@ question seriously rather than treating it as a minor style choice, is
 section 4's uniform-cost finding: a single-index specifier against a large
 mailbox costs seconds, not milliseconds, and a bulk array fetch of the
 exact same property across the exact same mailbox costs a few seconds
-*total* for all 17,486 messages. `whose` sits somewhere in between those
+*total* for all ~17,500 messages. `whose` sits somewhere in between those
 two extremes - it is Mail.app doing server/client-side filtering internally
 rather than JXA resolving one index - and upstream's own heavy, repeated
 use of it throughout `appleMailManager.ts` is the reason Task 6 measures it
@@ -686,17 +995,31 @@ cite that document once it does, rather than this one.
 
 ## Sources
 
-- `research/probes/02-accounts.js`, `03-mailboxes.js`, `04-message-props.js`
-  and their recordings in `research/results/` - every measurement in this
-  document not otherwise cited as an ad-hoc command is backed by one of
-  these three recordings.
-- `research/results/12-message-sizes.json` (Task 4's recording) - the bulk
-  `messageSize` distribution and the 2.064s/17,486-value bulk-fetch timing
-  cited in section 4, reused rather than re-measured, per this task's
-  instructions.
+- `research/probes/02-accounts.js`, `03-mailboxes.js`, `04-message-props.js`,
+  `12-message-sizes.js` and their recordings in `research/results/` - every
+  measurement in this document not otherwise cited as an ad-hoc command is
+  backed by one of these four recordings. `12-message-sizes.js` was
+  originally Task 4's probe; this document's fix round 1 converted it (and
+  `04-message-props.js`) to the account-selector convention and
+  re-recorded both, per "Probe arguments are selectors, never raw names" in
+  section 4.
+- `research/record.mjs`, `research/redact.mjs`, `research/verify.mjs` - all
+  three were modified in this document's fix round 1 (`requireStorableArgs`
+  in `record.mjs`; `STANDARD_MAILBOXES` exported from `redact.mjs`;
+  `replayReachedOnlyFailurePaths` added to `verify.mjs`), documented in
+  full in section 4's "Probe arguments are selectors, never raw names."
 - `docs/apple-mail/01-execution-model.md` - the verified/`[unverified]`
   convention this document reuses, and the buffer-limit reasoning section 4
-  cites rather than repeats.
+  cites rather than repeats. Its own citation of `research/results/12-message-sizes.json`
+  (17,486 messages, recorded by Task 4) is not updated by this document's
+  fix round 1 re-recording (17,487 messages, otherwise the same
+  distribution) - a one-message drift from real mail arriving between the
+  two measurements, left for that document's own maintainers to reconcile
+  or not, since correcting another task's already-reviewed citation is
+  outside this fix round's scope.
+- `docs/superpowers/specs/2026-08-11-mail-mcp-design.md` - the `[Gmail]`
+  container / "virtual INBOX" claim quoted and directly contradicted in
+  section 3.
 - `sdef /System/Applications/Mail.app` (Mail.app 16.0, macOS 26.6.1 build
   25G76) - the class and property listings verified in sections 1, 2, 3,
   and 4. Not committed to this repository (it is a few hundred KB of
