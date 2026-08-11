@@ -11,9 +11,15 @@ export function shapeOf(value) {
     return `[${inner}]`;
   }
   if (typeof value === "object") {
+    // Fix round 3 (task-3-rereview-2.md): keys are emitted as JSON string
+    // literals (JSON.stringify), never as bare tokens. See the parser
+    // comment below for why - this is what makes an object key containing
+    // any grammar character (":", ",", "{", "}", "[", "]", "|", a quote, or
+    // a backslash) parse with exactly one reading instead of being guessed
+    // at.
     const entries = Object.keys(value)
       .sort()
-      .map((k) => `${k}:${shapeOf(value[k])}`);
+      .map((k) => `${JSON.stringify(k)}:${shapeOf(value[k])}`);
     return `{${entries.join(",")}}`;
   }
   return typeof value;
@@ -21,55 +27,53 @@ export function shapeOf(value) {
 
 // --- diffShapes: a small parser for the fingerprint grammar shapeOf
 // produces above, plus a structural (not textual) diff over the parsed
-// trees. Fix round 1 (see task-3-review.md finding 1): the original
-// implementation extracted keys with a nesting-agnostic regex, so a key
-// that moved to a different nesting level, a "|" union whose branches
-// changed, or a same-key leaf-type-only change all collapsed into the same
-// generic "shape changed: expected/actual" full-string dump. verify.mjs
-// still FAILed correctly in every case (diffShapes always returns a
-// non-empty array when expected !== actual), but the message gave no
-// indication of *what* changed - fine for two tiny probes, unusable once
-// probes cover dozens of keys and deep nesting (Tasks 5+). This version
-// parses both fingerprints back into trees and reports each difference as
-// a dotted/bracketed PATH plus what kind of difference it is, so a reader
-// can act on the message without ever looking at the raw fingerprint text.
+// trees.
+//
+// History: fix round 1 (task-3-review.md finding 1) replaced a
+// nesting-agnostic regex with this parser so differences could be reported
+// by path instead of a full-string dump. Fix round 2 (task-3-rereview.md
+// section 2c) found that an UNQUOTED object key containing a ":" followed
+// later by a "," (e.g. a real key "INBOX:Sent,Old") could misparse: the
+// key's own embedded ":" looked exactly like the key/value delimiter, so
+// the rest of the key text was misread as a fabricated second entry. That
+// round's fix (LEAF_WORDS, a closed vocabulary for value words) narrowed
+// the window but did not close it - task-3-rereview-2.md reproduced the
+// same fabrication end to end through the real redact() pipeline (an email
+// address survives partial redaction with trailing ":word,word" text
+// intact) whenever the misread residual happened to equal one of the
+// reserved words.
+//
+// Fix round 3 (this version) closes the ambiguity at the source instead of
+// guessing at parse time: object keys are now emitted as JSON string
+// literals (see shapeOf above), so a key can contain any character at all -
+// including every grammar-special character - and still have exactly one
+// parse, because the parser knows precisely where a quoted key starts and
+// ends (tracking backslash escapes) rather than scanning for the first
+// unescaped ":". LEAF_WORDS is gone: it existed only to patch over the
+// unquoted-key ambiguity, and with keys unambiguous, a value position can
+// never accidentally be a stray fragment of a misread key, so a plain "any
+// non-delimiter run is a word" reading is safe again.
 //
 // Grammar shapeOf always emits (and this parser accepts, nothing more):
-//   shape  := object | array | word
-//   object := "{" [ key ":" shape ("," key ":" shape)* ] "}"
-//   array  := "[]" | "[" shape ("|" shape)* "]"
-//   word   := one of a small closed vocabulary (every possible `typeof`
-//             result, plus the literal "null" - see LEAF_WORDS below), never
-//             an arbitrary run of non-delimiter characters
-// Keys are an opaque run of text up to the next ":" - the parser does not
-// need to know what alphabet a probe author used for a key. Value words are
-// NOT opaque: they are checked against LEAF_WORDS (fix round 2, see the
-// comment there), because a permissive "any text is a valid word" reading
-// is exactly what let a colon-and-comma-containing key misparse silently.
+//   shape     := object | array | word
+//   object    := "{" [ entry ("," entry)* ] "}"
+//   entry     := quotedKey ":" shape
+//   quotedKey := a JSON string literal (RFC 8259 escaping: \" \\ \/ \b \f
+//                \n \r \t \uXXXX), decoded with JSON.parse
+//   array     := "[]" | "[" shape ("|" shape)* "]"
+//   word      := a run of characters containing none of , { } [ ] | : " \
+//                (always a typeof result such as "number"/"string"/
+//                "boolean", or the literal "null", since that is all
+//                shapeOf ever emits for a leaf - not validated against a
+//                fixed list here, since a stray word can no longer be a
+//                misread key fragment)
+// Keys, once unquoted, are opaque text to the rest of the parser and to the
+// diff logic below - they can contain anything, including the delimiters
+// themselves.
 
 class ShapeParseError extends Error {}
 
-// The complete, closed set of leaf words shapeOf can ever produce: every
-// possible `typeof` result, plus the special-cased "null". A value leaf can
-// never legitimately be anything else. Fix round 2 (task-3-rereview.md
-// section 2c): an object key containing a literal ":" followed later by a
-// "," with no intervening "{"/"[" - e.g. a real key "INBOX:Sent,Old" - used
-// to misparse silently: parseKey stopped at the key's own embedded ":",
-// leaving the rest ("Sent,Old:...") to be misread as a second, fabricated
-// top-level entry ("Old" with the real leaf as its value), and because that
-// misreading was grammatically well-formed end to end it never reached the
-// declared fallback - it produced a confident, wrong diagnosis naming a key
-// that does not exist. Rejecting anything outside this closed vocabulary
-// when parsing a VALUE position closes exactly that gap: the misread middle
-// segment ("Sent") is essentially never one of these nine words, so it can
-// no longer be silently accepted as a plausible leaf - parsing throws
-// instead, and diffShapes falls back honestly. This does not require
-// perfectly parsing every colon-containing key in general (the grammar has
-// no escaping, so that is not always possible), only that a misread never
-// passes for a real one.
-const LEAF_WORDS = new Set([
-  "undefined", "object", "boolean", "number", "bigint", "string", "symbol", "function", "null",
-]);
+const WORD_DELIMITERS = new Set([",", "{", "}", "[", "]", "|", ":", '"', "\\"]);
 
 function parseShapeTree(s) {
   let i = 0;
@@ -85,12 +89,42 @@ function parseShapeTree(s) {
     return parseWord();
   };
 
+  // A key is a JSON string literal: scan for the matching closing quote,
+  // treating "\" as escaping exactly the one character after it. This
+  // correctly skips past "\uXXXX" too, without any special-casing: after
+  // stepping over the "\" and the "u", the four hex digits that follow can
+  // never themselves be "\" or '"', so the plain character-by-character
+  // scan resumes safely and lands on the real closing quote regardless of
+  // how long the escape sequence was. The matched substring (quotes
+  // included) is then handed to JSON.parse to decode it - reusing the
+  // platform's own JSON string-literal parser rather than re-implementing
+  // escape decoding by hand.
   const parseKey = () => {
+    if (s[i] !== '"') {
+      fail(`expected a quoted key starting with '"', found '${s[i] ?? "<end of input>"}'`);
+    }
     const start = i;
-    while (i < s.length && s[i] !== ":") i++;
-    if (i >= s.length) fail("unterminated key, no ':' found");
-    if (i === start) fail("empty key");
-    return s.slice(start, i);
+    i++; // consume opening quote
+    let closed = false;
+    while (i < s.length) {
+      if (s[i] === "\\") {
+        i += 2;
+        continue;
+      }
+      if (s[i] === '"') {
+        i++;
+        closed = true;
+        break;
+      }
+      i++;
+    }
+    if (!closed) fail("unterminated quoted key, no closing '\"' found");
+    const literal = s.slice(start, i);
+    try {
+      return JSON.parse(literal);
+    } catch (err) {
+      fail(`malformed quoted key ${literal}: ${err.message}`);
+    }
   };
 
   const parseObject = () => {
@@ -102,6 +136,7 @@ function parseShapeTree(s) {
     }
     for (;;) {
       const key = parseKey();
+      if (s[i] !== ":") fail(`expected ':' after key ${JSON.stringify(key)}`);
       i++; // consume ":"
       const value = parseNode();
       entries.push([key, value]);
@@ -113,7 +148,7 @@ function parseShapeTree(s) {
         i++;
         break;
       }
-      fail(`expected ',' or '}' after key "${key}"`);
+      fail(`expected ',' or '}' after key ${JSON.stringify(key)}`);
     }
     return { kind: "object", entries };
   };
@@ -142,11 +177,9 @@ function parseShapeTree(s) {
 
   const parseWord = () => {
     const start = i;
-    while (i < s.length && !",{}[]|:".includes(s[i])) i++;
+    while (i < s.length && !WORD_DELIMITERS.has(s[i])) i++;
     if (i === start) fail(`unexpected character '${s[i]}'`);
-    const word = s.slice(start, i);
-    if (!LEAF_WORDS.has(word)) fail(`"${word}" is not a recognized leaf type`);
-    return { kind: "leaf", word };
+    return { kind: "leaf", word: s.slice(start, i) };
   };
 
   const tree = parseNode();
@@ -157,13 +190,14 @@ function parseShapeTree(s) {
 // Re-renders a parsed tree back to shapeOf's own canonical text. The parser
 // never reorders anything (object keys and array-union members are already
 // sorted in whatever string produced the tree, since shapeOf sorts them
-// before joining), so render(parseShapeTree(s)) reproduces s exactly. Used
-// to name a whole missing/added subtree, or one differing union branch, in
-// a diff message without inventing a second string format for it.
+// before joining), and JSON.stringify/JSON.parse are exact inverses of one
+// another, so render(parseShapeTree(s)) reproduces s exactly. Used to name a
+// whole missing/added subtree, or one differing union branch, in a diff
+// message without inventing a second string format for it.
 function render(node) {
   if (node.kind === "leaf") return node.word;
   if (node.kind === "object") {
-    return `{${node.entries.map(([k, v]) => `${k}:${render(v)}`).join(",")}}`;
+    return `{${node.entries.map(([k, v]) => `${JSON.stringify(k)}:${render(v)}`).join(",")}}`;
   }
   if (node.members.length === 0) return "[]";
   return `[${node.members.map(render).join("|")}]`;
@@ -175,6 +209,9 @@ const describeKind = (node) => (node.kind === "leaf" ? node.word : node.kind);
 // (no leading dot for the very first segment); descending into an array's
 // elements appends "[]" directly onto the field it belongs to, matching how
 // the coordinator's own worked examples read ("accounts[].mailboxes[]...").
+// Keys appear here exactly as parseKey decoded them (never quoted or
+// escaped) - fix round 3 only changed the fingerprint's internal encoding
+// of keys, not this human-readable diff output.
 const describePath = (path) => {
   let out = "";
   for (const seg of path) {

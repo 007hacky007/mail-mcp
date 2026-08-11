@@ -5,7 +5,7 @@
     "<str len=3 chars=ascii>"
   ],
   "seconds": 0.035,
-  "shape": "{firstIsSeparator:boolean,mode:string,rawArgv:[string],rawArgvLength:number}",
+  "shape": "{\"firstIsSeparator\":boolean,\"mode\":string,\"rawArgv\":[string],\"rawArgvLength\":number}",
   "data": {
     "mode": "file",
     "rawArgv": [

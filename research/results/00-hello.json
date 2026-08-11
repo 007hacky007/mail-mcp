@@ -3,8 +3,8 @@
   "args": [
     "user1@example.com"
   ],
-  "seconds": 0.144,
-  "shape": "{accountCount:number,argvEcho:[string],mailReachable:boolean}",
+  "seconds": 0.14,
+  "shape": "{\"accountCount\":number,\"argvEcho\":[string],\"mailReachable\":boolean}",
   "data": {
     "mailReachable": true,
     "accountCount": 5,

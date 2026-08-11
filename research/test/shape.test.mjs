@@ -60,14 +60,16 @@ test("[fix round 1] a union-branch correlation change names the branches removed
   // Review's exact example (section 3): [{a:number,b:string}] (a always
   // co-occurs with b) vs [{a:number}|{b:string}] (now mutually exclusive).
   // The "|" must not be invisible to the diff, and the result must not be
-  // the generic dump.
+  // the generic dump. Note (fix round 3): rendered object keys are quoted
+  // in the fingerprint grammar now (e.g. {"a":number}), so these substring
+  // checks look for the quoted form.
   const expected = shapeOf([{ a: 1, b: "x" }]);
   const actual = shapeOf([{ a: 1 }, { b: "x" }]);
   const diffs = diffShapes(expected, actual);
   assert.ok(diffs.every((d) => !d.startsWith("shape changed")), diffs.join("\n"));
-  assert.ok(diffs.some((d) => d.includes("union branch removed") && d.includes("{a:number,b:string}")));
-  assert.ok(diffs.some((d) => d.includes("union branch added") && d.includes("{a:number}")));
-  assert.ok(diffs.some((d) => d.includes("union branch added") && d.includes("{b:string}")));
+  assert.ok(diffs.some((d) => d.includes("union branch removed") && d.includes('{"a":number,"b":string}')));
+  assert.ok(diffs.some((d) => d.includes("union branch added") && d.includes('{"a":number}')));
+  assert.ok(diffs.some((d) => d.includes("union branch added") && d.includes('{"b":string}')));
 });
 
 test("[fix round 1] a same-key leaf-type-only change is reported as a type change at that path, not a full-string dump", () => {
@@ -78,8 +80,11 @@ test("[fix round 1] a same-key leaf-type-only change is reported as a type chang
 });
 
 test("[fix round 1] an array going from empty to populated is reported by path, not as a generic dump", () => {
+  // Note (fix round 3): the rendered non-empty array now shows its object
+  // member's key quoted ({"id":number}) - the fingerprint encoding changed,
+  // the diff wording ("was [] , now ...") did not.
   const diffs = diffShapes(shapeOf({ messages: [] }), shapeOf({ messages: [{ id: 1 }] }));
-  assert.deepEqual(diffs, ["messages: was [] , now [{id:number}]"]);
+  assert.deepEqual(diffs, ['messages: was [] , now [{"id":number}]']);
 });
 
 test("[fix round 1] an object going from empty to populated is reported as its keys being added, at the nested path", () => {
@@ -164,30 +169,87 @@ test("[fix round 2 / Fix 1] shapeOf(redact(x)) equals shapeOf(x) for a realistic
 });
 
 test("[fix round 2 / Fix 2] a key containing both ':' and ',' (INBOX:Sent,Old) never fabricates a bare 'Old' entry", () => {
-  // The re-review's exact minimal repro (task-3-rereview.md section 2c):
+  // The original re-review's minimal repro (task-3-rereview.md section 2c):
   // parseKey used to stop at the key's own embedded ':', misreading the
   // rest of the real key text as a second, fabricated sibling entry named
   // "Old" - a key that does not exist in either object - producing a
-  // confident but wrong diff instead of the declared fallback.
+  // confident but wrong diff instead of the declared fallback. Fix round 2
+  // (LEAF_WORDS) closed this exact case but left a narrower residual open
+  // (see the fix-round-3 test below); fix round 3 (quoted keys) closes the
+  // whole class, so this key now round-trips into a fully precise,
+  // CORRECT diff - no fallback needed at all.
   const expected = shapeOf({ "INBOX:Sent,Old": 1 });
   const actual = shapeOf({ "INBOX:Sent,Old": "archived" });
-  assert.equal(expected, "{INBOX:Sent,Old:number}");
-  assert.equal(actual, "{INBOX:Sent,Old:string}");
+  assert.equal(expected, '{"INBOX:Sent,Old":number}');
+  assert.equal(actual, '{"INBOX:Sent,Old":string}');
 
   const diffs = diffShapes(expected, actual);
-  // Never the fabricated line the re-review found.
+  // Never the fabricated line the original re-review found.
   assert.ok(
     !diffs.some((d) => d.startsWith("Old:")),
     `must not fabricate a bare "Old" entry, got: ${diffs.join("\n")}`
   );
-  // Acceptable outcomes per the dispatch: either a correct diff naming the
-  // real key, or the declared fallback (which embeds both raw fingerprints
-  // verbatim, so the real key is still visible in the message even though
-  // it is not parsed out as a structured path).
-  const namesRealKey = diffs.some((d) => d.includes("INBOX:Sent,Old"));
-  const isDeclaredFallback = diffs.length === 1 && /could not be parsed structurally/i.test(diffs[0]);
+  // Quoting keys makes this fully unambiguous now, so the outcome is no
+  // longer merely "acceptable" (real key named OR fallback) - it is exactly
+  // the correct, precise diff naming the real key.
+  assert.deepEqual(diffs, ["INBOX:Sent,Old: type changed number -> string"]);
+});
+
+// --- Fix round 3 (see task-3-rereview-2.md): fingerprints now quote object
+// keys as JSON string literals instead of emitting them as bare tokens, so
+// a key can contain any character - including every grammar-special one -
+// and still parse with exactly one reading. This replaces fix round 2's
+// LEAF_WORDS closed-vocabulary guess (which narrowed the misparse window
+// but, per the re-review, did not close it: the same fabrication
+// reproduced whenever the misread residual happened to equal one of the
+// nine reserved words) with an unambiguous grammar. LEAF_WORDS is gone. ---
+
+test("[fix round 3] the re-review's exact residual: a redacted key retaining ':' and ',' after email substitution never fabricates a key, even when the residual is a reserved word", () => {
+  // task-3-rereview-2.md's own worked example: redact() replaces only the
+  // matched EMAIL SUBSTRING within a key, leaving any trailing text - here
+  // a colon, the word "object" (one of fix round 2's own LEAF_WORDS), a
+  // comma, and "Old" - completely intact. This is the exact pipeline path
+  // (through real redact(), not a hand-written literal) that the re-review
+  // used to prove fix round 2's fix was a narrowing, not a structural
+  // close. Fictional email/domain only (mail.test is an RFC 2606 reserved
+  // test domain) - never the human partner's real gmail.com/realdomain1.com/
+  // realdomain2.eu domains.
+  const rawKey = "fictional.tester@mail.test:object,Old";
+
+  const redactedKey = Object.keys(redact({ [rawKey]: 1 }))[0];
+  assert.match(redactedKey, /^user\d+@example\.com:object,Old$/, `unexpected redacted key: ${redactedKey}`);
+
+  const expected = shapeOf(redact({ [rawKey]: 1 }));
+  const actual = shapeOf(redact({ [rawKey]: "archived" }));
+  const diffs = diffShapes(expected, actual);
   assert.ok(
-    namesRealKey || isDeclaredFallback,
-    `expected either the real key named or the declared fallback, got: ${diffs.join("\n")}`
+    !diffs.some((d) => d.startsWith("Old:")),
+    `must not fabricate a bare "Old" entry, got: ${diffs.join("\n")}`
   );
+  assert.deepEqual(diffs, [`${redactedKey}: type changed number -> string`]);
+});
+
+test("[fix round 3] a key containing any single grammar-special character (including a quote or a backslash) round-trips through shapeOf and diffShapes without misparse", () => {
+  const specialChars = [":", ",", "{", "}", "[", "]", "|", '"', "\\"];
+  for (const ch of specialChars) {
+    const key = `a${ch}b`;
+    const expected = shapeOf({ [key]: 1 });
+    const actual = shapeOf({ [key]: "x" });
+    const diffs = diffShapes(expected, actual);
+    assert.deepEqual(
+      diffs,
+      [`${key}: type changed number -> string`],
+      `failed for character ${JSON.stringify(ch)}: fingerprints were ${expected} / ${actual}, got diffs ${JSON.stringify(diffs)}`
+    );
+  }
+});
+
+test("[fix round 3] a key that is an email address still fingerprints as its pseudonym (Fix 1 must not regress)", () => {
+  const fictionalEmail = "fictional.person@example.net";
+  const redactedKey = Object.keys(redact({ [fictionalEmail]: 1 }))[0];
+  assert.match(redactedKey, /^user\d+@example\.com$/);
+
+  const shape = shapeOf(redact({ [fictionalEmail]: 1 }));
+  assert.equal(shape, `{"${redactedKey}":number}`);
+  assert.ok(!shape.includes(fictionalEmail), `raw address leaked into the fingerprint: ${shape}`);
 });
