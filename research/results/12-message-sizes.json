@@ -4,8 +4,11 @@
     "0",
     "INBOX"
   ],
-  "seconds": 1.211,
+  "seconds": 1.937,
   "shape": "{\"accountName\":string,\"fetchError\":string,\"fetchOk\":boolean,\"maxSizeBytes\":number,\"medianSizeBytes\":number,\"messageCount\":number,\"over16MB\":number,\"over1MB\":number,\"over4MB\":number,\"over64MB\":number}",
+  "successProfile": {
+    "fetchOk": true
+  },
   "data": {
     "fetchOk": true,
     "fetchError": "<str len=0 chars=ascii>",

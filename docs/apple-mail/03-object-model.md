@@ -543,7 +543,7 @@ this object model - it is a function of how the message is reached:**
 |---|---|---|
 | Single-index specifier (`messages[0]`), small mailbox (3 messages) | 8-68 ms per property | ad-hoc run above |
 | Single-index specifier (`messages[0]`), medium mailbox (~17,500 messages) | 0.48-3.2s per property, uniformly - no property is a clear outlier | this section's four runs |
-| Single-index specifier (`messages[0]`), larger mailbox (52,143 messages, the `largest-enabled` account - see below) | **did not complete inside a 240-second timeout, for all 17 properties combined** | ad-hoc run, this fix round (`spawnSync osascript ETIMEDOUT` after 240.0s) |
+| Single-index specifier (`messages[0]`), larger mailbox (52,143 messages, the `largest-enabled` account - see below) | **did not complete inside a 240-second timeout, for all 17 properties combined** | ad-hoc run, this fix round (`spawnSync osascript ETIMEDOUT` after 240.0s) - see the exact command, output, and why 240s specifically, immediately below the table |
 | Bulk array fetch (`mailbox.messages.messageSize()`), the ~17,500-message mailbox, all messages at once | 1.211s-2.064s **total** across two separate measurements, for **all ~17,500** values - about 0.07-0.12ms per message | `research/results/12-message-sizes.json` (this fix round, selector `0`) and Task 4's original recording of the same account, cited for comparison |
 | Bulk array fetch, the 52,143-message mailbox, all messages at once | **40.4s-53.0s total** across two separate measurements, for all 52,143 values - about 0.77-1.02ms per message | two ad-hoc runs, this fix round (same `runProbe` call as the `largest-enabled` demonstration below, run twice) |
 
@@ -564,6 +564,51 @@ because "an inherited, half-remembered, or under-sampled number stated as
 measured fact" is the exact failure category this whole archive exists to
 catch, and this document is not exempt from making that mistake itself -
 twice, in the same paragraph, while writing about exactly this problem.
+
+**The 240-second-timeout figure, in full, since it is the single most
+dramatic number in this document and this task's coordinator correctly
+flagged it as needing exact provenance rather than a bare claim.** This is
+an ad-hoc, single-run observation - not a committed recording, which is
+also what the table's "Source" column has said throughout - reproduced here
+as the exact command and its exact output, per this archive's own
+verified/`[unverified]` standard:
+
+```
+$ node -e '
+import("./research/harness.mjs").then(async ({ runProbe }) => {
+  const r = runProbe("04-message-props", ["largest-enabled", "INBOX"], 240000);
+  if (!r.ok) { console.log("FAILED after", r.seconds.toFixed(1), "s:", r.error); return; }
+  console.log("ok");
+});
+'
+FAILED after 240.0 s: spawn failed: spawnSync osascript ETIMEDOUT
+```
+
+**Why 240000 (240s) and not `research/harness.mjs`'s documented
+`DEFAULT_TIMEOUT_MS` of 120000 (120s):** the first attempt at this exact
+measurement used the default (calling `runProbe` with only two arguments,
+no explicit timeout), and it also failed to complete - the command ran
+long enough that this session's own shell tooling moved it to a background
+task rather than returning a normal result, consistent with hitting the
+120-second internal timeout at roughly the same time. Rather than report
+an ambiguous "didn't finish, exact cause unclear," the timeout was
+deliberately doubled to 240000ms and the command re-run, to distinguish
+two different possibilities: "merely slow, and would finish given
+noticeably more time" versus "not converging in any short multiple of the
+default." **It did not complete at 240s either** - the result quoted above.
+This is the whole of the evidence: two runs, one at 120s (inconclusive -
+background-tooling artifact, not a clean `ETIMEDOUT` transcript) and one at
+240s (`ETIMEDOUT`, quoted in full above). `[unverified]` whether the
+operation would complete at some longer timeout, and if so how long that
+would take, and whether the underlying cost grows linearly, polynomially,
+or some other way past this point - no third, longer run was attempted,
+both because the qualitative conclusion below does not depend on the exact
+number and because that would mean tying up the user's live Mail.app for
+several more minutes for a single data point. What **is** verified,
+plainly, without hedging: this exact operation, which completes in
+seconds on the ~17,500-message mailbox, did not complete within 240
+seconds - four times the harness's own default timeout - on the
+52,143-message mailbox.
 
 **With the correct numbers, the bulk-fetch row tells its own, smaller
 version of the same story as the single-index rows.** ~17,500 to 52,143
@@ -849,6 +894,142 @@ does not distinguish them will eventually produce exactly this failure
 mode: a verification step that reports success because it stopped being
 able to fail informatively, not because it stopped being able to fail.
 
+### Fix round 2: a shape match still is not enough, and the fix was still position-blind
+
+Fix round 1 above closed the total-failure false pass, but a follow-up
+review (`task-5-rereview.md`) found the fix itself was narrower than
+"generic" implied, in two independent ways - one a detection gap, one a
+privacy gap. Both are fixed; both fixes ship with unit tests, not just a
+hand-run transcript, because that is exactly what the review found
+missing the first time.
+
+**Gap 1 (High): a SINGLE property silently flipping is invisible to every
+defense that existed after fix round 1.** `research/shape.mjs`'s
+`diffShapes` compares only `typeof`, so `ok: true` and `ok: false` are both
+`"boolean"` - structurally identical to it. Fix round 1's
+`replayReachedOnlyFailurePaths` only fires when *every* flag is false. So:
+if a future macOS/Mail.app update makes exactly one property permanently
+unavailable - say `flagIndex` starts throwing while the other 16 properties
+in `04-message-props` keep working - the probe still records `ok: false`
+for that one property (its `timed()` wrapper is deliberately
+shape-symmetric, per fix round 1), the fingerprint stays byte-identical
+(shape doesn't encode which boolean, only that it's a boolean), and the
+all-or-nothing check does not fire (16 of 17 flags are still true). `verify.mjs`
+would report a clean match, forever, for exactly the kind of drift this
+whole archive exists to catch - a real Mail.app version-to-version change,
+one property at a time, not the whole object model vanishing at once.
+
+**The fix: a SUCCESS PROFILE, recorded alongside the fingerprint, not
+folded into it.** `research/successProfile.mjs` (new this fix round)
+exports `collectSuccessProfile(data)`, which walks a probe's output and
+returns a flat map of every `ok`-style boolean's exact location to its
+value - `{"props.id.ok": true, "props.flagIndex.ok": true, ...}` - and
+`diffSuccessProfile(recorded, live)`, which compares two such maps and
+reports every path whose value differs, **in either direction**. A flag
+going true-to-false is drift; false-to-true is reported too, since it
+means the *original recording* captured a transient failure and should
+itself be re-recorded - not merely that today's replay differs from
+yesterday's. `research/record.mjs` now stores this profile as its own
+top-level `successProfile` field, separate from `shape`; `research/verify.mjs`
+diffs it separately from the shape comparison and from the fix-round-1
+all-or-nothing check (kept as a backstop - see its own updated comment),
+so the three signals - shape drift, per-property value drift, total
+failure - stay individually readable in the output rather than merging
+into one conflated FAIL.
+
+**Proven to actually catch a single flag flip, not just asserted:**
+the committed `research/results/04-message-props.json` was edited (a
+scratch, throwaway edit, restored immediately after, verified identical to
+the original via a full-file diff) to change one path's recorded value -
+`props.flagIndex.ok` from `true` to `false` - simulating a *recording* that
+had captured a broken state. Running the real, unmodified
+`node research/verify.mjs` against that edited file:
+
+```
+FAIL 04-message-props: success-profile drift:
+  props.flagIndex.ok: false -> true
+```
+
+Named exactly the one path that differed, in the exact `recorded -> live`
+direction, while every other probe (including `04-message-props`'s own
+shape comparison, which found nothing - both values are still `typeof
+"boolean"`) reported clean. `7/7` dropped to `6/7` for exactly this one,
+precise reason. The file was restored immediately afterward
+(byte-identical, confirmed by `diff`), and `node research/verify.mjs`
+returned to `7/7`.
+
+**Gap 2 (privacy): the arg-storability check was position-blind, so a
+personal, all-digit string could be stored verbatim.** Fix round 1's
+`isStorableVerbatim` applied the identical test to every argument
+position: "is this string a decimal integer, a known selector keyword, or
+a standard mailbox name" - regardless of *where* it appeared. But this
+project's own probes that take arguments use position 0 for an account
+selector and position 1 for a mailbox name that is never meant to be read
+as an index. A real, personal mailbox literally named `"12345"` (a
+year-only archive folder is a plausible real example) or a phone number
+passed as a probe's second argument would satisfy "is this string
+all-digit" and be committed to the archive **verbatim** - the exact leak
+this whole mechanism exists to prevent, just shifted from the account
+position to the mailbox position.
+
+**The fix: the rule is now POSITIONAL**, in `research/argStorability.mjs`
+(new this fix round, extracted from `research/record.mjs` so it is
+independently testable): position 0 accepts a decimal integer (an
+account-list index) or a known selector keyword; every later position
+accepts a standard mailbox name or a known selector keyword, but **never**
+merely "made of digits" - an all-digit string is only ever safe as an
+index, and an index is exclusively position 0's job. The refusal message
+still names only the argument's position, never its text, unchanged from
+fix round 1.
+
+**Unit-tested, not just hand-verified this time.** Three new test files,
+zero `osascript` calls (fixtures only, so they run inside `npm test`):
+`research/test/argStorability.test.mjs` (15 tests - including the exact
+FIX B hole, an all-digit string refused at position 1 but accepted at
+position 0, plus the whitespace/casing/suffix exact-match variants the
+re-review confirmed by hand), `research/test/successProfile.test.mjs` (12
+tests - a flag flipping in both directions, a path appearing, a path
+disappearing, multiple flips at once), and `research/test/failurePaths.test.mjs`
+(9 tests - all-false, all-true, a documented-intentional mix, and the
+exact "16 true / 1 false" scenario that motivated Fix A, asserted as
+correctly *not* caught by this narrower check since that is now the
+success profile's job). `npm test` reports 102 (66 before this fix round
+plus these 36).
+
+**Coverage gap, made explicit rather than assumed covered (the
+convention this document now establishes for every future probe):**
+this whole detection layer - both the fix-round-1 check and this fix
+round's success profile - only ever protects a probe whose output
+contains at least one `ok`-style boolean field. `research/probes/03-mailboxes.js`
+and `07-coldstart.js` have none today (confirmed against their committed
+recordings' `shape` strings) and get **no protection from either
+mechanism**, relying solely on the plain shape/key-set comparison -
+`research/probes/00-hello.js` and `01-argv-modes.js` don't touch Mail's
+object model in a way this applies to at all (they test argv fidelity
+itself with arbitrary punctuation, not an account/mailbox lookup). Neither
+was re-recorded in this fix round, for a real, unresolved tension worth
+stating rather than hiding: `requireStorableArgs`'s gate is not
+probe-name-aware - it would refuse their own committed test arguments
+(deliberately arbitrary strings like a quoted phrase or a backslash) just
+as it would refuse a personal name, since neither is a decimal index, a
+selector keyword, or a standard mailbox name. Re-recording either probe
+today, with its existing test intent intact, would fail at the gate. This
+is left as a known, out-of-scope gap for this fix round rather than
+resolved (for example, by scoping the gate to only the probes that
+actually take account/mailbox selectors) - both probes' *committed*
+recordings predate the gate entirely and are unaffected by it unless and
+until someone runs `record.mjs` against them again. **The requirement for
+every future
+probe in this archive (Tasks 6 through 13), stated plainly so it is a
+requirement and not an accident:** every probe that touches Mail's object
+model must include at least one `ok`-style boolean (a bare `ok`, or a
+`*Ok`-suffixed name like `fetchOk`) reflecting whether its primary read
+succeeded, specifically so this detection layer has something to protect
+it with. A probe with no such field is invisible to both the all-or-nothing
+check and the success-profile diff, and relies entirely on shape/key-set
+drift being loud enough to notice on its own - which, per Gap 1 above, a
+single silently-failing property is not.
+
 ## 5. Message identity, in full
 
 This is the section every other document in this archive depends on.
@@ -1026,18 +1207,31 @@ cite that document once it does, rather than this one.
   Apple's own dictionary XML with no probe-specific content); reproduce it
   with the command in "How to read this document" rather than looking for a
   saved copy.
-- `../apple-mail-mcp/src/services/appleMailManager.ts`
-  - `idLocationIndex`, `getMessageById`, `findNumericIdByMessageId`,
-  `disabledAccountGuard`, `isAccountEnabled` (message-identity and
-  disabled-account sections). Read-only; no code copied, only comments and
-  short script fragments quoted for their design rationale.
-- `../apple-mail-mcp/src/services/imapMultiAccount.ts`
-  - `planCountSources`, the exact fix for issue #143 (disabled-account
-  section).
-- `../apple-mail-mcp/CHANGELOG.md` - issue #143's
-  full entry, including the intermittency caveat quoted in the
-  disabled-account section.
-- `../apple-mail-mcp/CLAUDE.md` - the smart-mailbox
-  plist-editing behavior (section 1) and the full-path/ambiguous-leaf-name
-  policy for `move-message`/`rename-mailbox`/`delete-mailbox` (section 3),
-  both cited as corroboration of what this document independently verified.
+- `apple-mail-mcp/src/services/appleMailManager.ts` (the upstream reference
+  project this archive is mined from - a sibling checkout, not a
+  subdirectory of this repository; cited by repo-relative path, per
+  fix round 2, so this citation stays valid regardless of where either
+  repository is checked out on disk) - `idLocationIndex`, `getMessageById`,
+  `findNumericIdByMessageId`, `disabledAccountGuard`, `isAccountEnabled`
+  (message-identity and disabled-account sections). Read-only; no code
+  copied, only comments and short script fragments quoted for their design
+  rationale.
+- `apple-mail-mcp/src/services/imapMultiAccount.ts` - `planCountSources`,
+  the exact fix for issue #143 (disabled-account section).
+- `apple-mail-mcp/CHANGELOG.md` - issue #143's full entry, including the
+  intermittency caveat quoted in the disabled-account section.
+- `apple-mail-mcp/CLAUDE.md` - the smart-mailbox plist-editing behavior
+  (section 1) and the full-path/ambiguous-leaf-name policy for
+  `move-message`/`rename-mailbox`/`delete-mailbox` (section 3), both cited
+  as corroboration of what this document independently verified.
+- `research/argStorability.mjs`, `research/successProfile.mjs`,
+  `research/failurePaths.mjs` and their tests in `research/test/` (all new
+  this fix round, extracted from `record.mjs`/`verify.mjs` specifically so
+  their logic is unit-testable without a subprocess or a live Mail.app
+  call) - the fix-round-2 mechanisms documented in full in section 4's
+  "Fix round 2: a shape match still is not enough, and the fix was still
+  position-blind."
+- `task-5-rereview.md` (this archive's own SDD working directory, not part
+  of the committed repository) - the source of every fix-round-2 finding
+  addressed in this document; not committed here, so not cited by path,
+  only by the findings it produced.
