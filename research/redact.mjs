@@ -56,19 +56,31 @@ const VALUE_VALIDATORS = new Map([
 // walk()'s primitive branch untouched - `ok`, `found`, `raised`, `status`,
 // counts and timings need no entry here at all.
 
-// Fix-round-2 (task-2-rereview.md Hole C, Part 3): SAFE_KEY_PATTERN (any
-// identifier-shaped string) let a personal string written without spaces
-// - e.g. "JaneRoePersonalNotes" - survive as an object key untouched, and
-// separately mis-redacted purely-numeric keys like "0"/"1" into
-// "redactedKeyN" even though a numeric key cannot itself be personal data
-// (breaking exact key-set preservation, which Task 3's structural-
-// fingerprint diffing depends on). Replaced with two narrow, explicit
-// checks in redactKey below: a key is kept verbatim only if it is purely
-// numeric, or it is one of the following known structural key names -
-// this file's own rule vocabulary, the VALUE_VALIDATORS keys above, and
-// the real field names research/harness.mjs and the two probes written so
-// far (00-hello.js, 01-argv-modes.js) actually emit. Extend this set, not
-// a pattern, when a new probe introduces a genuinely new structural field.
+// Fix round 3 (see task-2-report.md "Fix round 3"): object keys in probe
+// output are LITERALS WRITTEN BY THE PROBE AUTHOR in the probe source -
+// they are not data returned by Mail. An unrecognized key is therefore
+// almost never personal data; it is far more likely a legitimate
+// structural field this allowlist has not been told about yet. Round 2's
+// SAFE_KEY_PATTERN let a personal string written without spaces (e.g.
+// "JaneRoePersonalNotes") survive verbatim, and its replacement silently
+// RENAMED every other unrecognized key to "redactedKeyN" - which is worse:
+// fingerprints exist to diff key sets, so a renamed key makes the
+// fingerprint meaningless (a real Mail.app change and a redaction-induced
+// rename become indistinguishable), and any later code that reads a
+// field by name (e.g. a measurements generator reading `data.messageCount`)
+// silently sees nothing. So this set must be COMPLETE for every key the
+// project's probes actually emit, covering: this file's own structural
+// rule vocabulary; the VALUE_VALIDATORS keys above; the recorder's own
+// added keys (research/record.mjs: probe, args, seconds, shape, data) and
+// the harness result keys (research/harness.mjs: ok, error, status); and
+// every key emitted by all 12 probes named in
+// docs/superpowers/plans/2026-08-11-apple-mail-knowledge-archive.md
+// (Tasks 1, 4, 5, 6, 8, 9, 13), most of which are not written yet.
+// Growing a probe with a new field REQUIRES adding its key here - this is
+// intentional friction: it is what turns "a probe author added a field"
+// into a loud failure at record time instead of a silently mangled
+// fingerprint discovered much later. See redactKey() below for what
+// happens to a key that is NOT here and is not purely numeric.
 const STRUCTURAL_KEY_NAMES = new Set([
   // This file's own rule vocabulary
   "subject", "name", "path", "fullpath", "accountname",
@@ -77,15 +89,59 @@ const STRUCTURAL_KEY_NAMES = new Set([
   // The per-key value-validator table above
   "probe", "mode", "chars", "accounttype",
   "type", "idtype", "sampleidtype", "dategettimetype", "firstidtype",
-  // research/harness.mjs's own wrapper shape
+  // research/harness.mjs's wrapper shape (Task 1)
   "ok", "seconds", "data", "error", "status",
-  // research/probes/00-hello.js
+  // research/record.mjs's added keys (Task 3)
+  "args", "shape",
+  // research/probes/00-hello.js (Task 1)
   "mailreachable", "accountcount", "argvecho",
-  // research/probes/01-argv-modes.js
+  // research/probes/01-argv-modes.js (Task 1)
   "rawargv", "rawargvlength", "firstisseparator",
+  // research/probes/07-coldstart.js (Task 4)
+  "inprocessroundtrips",
+  // research/probes/02-accounts.js (Task 5)
+  "enabled", "emailaddresses", "username", "servername", "mailboxcount", "value",
+  // research/probes/03-mailboxes.js (Task 5)
+  "depth", "messagecount", "unreadcount",
+  // research/probes/04-message-props.js (Task 5)
+  "props", "id", "messageid", "sender", "datereceived", "datesent",
+  "readstatus", "flaggedstatus", "flagindex", "messagesize", "mailboxname",
+  "replyto", "torecipients", "ccrecipients", "contentlength", "sourcelength",
+  "attachmentcount", "sample",
+  // research/probes/05-bulk-fetch.js (Task 6)
+  "fetch", "fetchtotal", "jsfilterseconds", "hits", "arraylengths", "datesample",
+  // research/probes/06-whose-vs-bulk.js (Task 6)
+  "whosecountseconds", "whosecount", "whosefetchseconds", "whosematched",
+  "bulkseconds", "bulkhits",
+  // research/probes/10-attachment-source.js (Task 8)
+  "found", "scanned", "objects", "mimetype", "filesize", "downloaded",
+  "objectseconds", "sourcebytes", "sourceseconds", "mime", "boundaries",
+  "dispositions", "filenames", "encodedwords",
+  // research/probes/08-gmail-inbox.js (Task 9)
+  "totalmailboxes", "isgmailstyle", "literalinbox", "allmail", "important",
+  "flatlookupinbox", "flatlookupallmail", "containernames",
+  // research/probes/09-unicode-dates.js (Task 9)
+  "sampled", "nonasciisubjects", "astralsubjects", "emptysubjects",
+  "longestsubjectchars", "dateisdateobject", "dateisoroundtrip",
+  // research/probes/11-errors.js (Task 13)
+  "badaccount", "badmailbox", "badmessageindex", "badproperty", "raised", "number",
 ]);
 
 const isNumericSegment = (s) => /^\d+$/.test(s);
+// Used only to decide, for a key NOT on the allowlist above and not purely
+// numeric, whether it looks like it could be carrying data (fails this
+// test: contains "@", a space, a "/", or anything else a JS identifier
+// cannot contain) versus looks like a plain structural field name the
+// allowlist simply has not been told about yet (passes this test).
+const JS_IDENTIFIER_RE = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+const describeKeyPath = (keyPath) => {
+  let out = "";
+  for (const seg of keyPath) {
+    out += isNumericSegment(seg) ? `[${seg}]` : out ? `.${seg}` : seg;
+  }
+  return out || "(root)";
+};
 
 export function newRedactor() {
   const emails = new Map();
@@ -146,18 +202,39 @@ export function newRedactor() {
   const describeSubject = (s) => `<subject len=${[...s].length} chars=${charClass(s)}>`;
   const describeGeneric = (s) => `<str len=${[...s].length} chars=${charClass(s)}>`;
 
-  // Redact an object KEY (review finding 1.9). A purely-numeric key
-  // (Fix 2) or a name from the explicit structural allowlist (Fix 4) is
-  // schema, not data, and survives untouched; anything else might be
-  // carrying an address (routed through the same pseudonym map values
-  // use, for identity consistency) or a display name / anything else
-  // (routed to an opaque, collision-proof per-key pseudonym).
-  const redactKey = (k) => {
+  // Redact an object KEY (review finding 1.9; fail-loudly behavior is
+  // fix round 3 - see the comment on STRUCTURAL_KEY_NAMES above). A purely
+  // numeric key or a name from the explicit structural allowlist is
+  // schema, not data, and survives untouched. For anything else, decide
+  // by shape: a key that cannot be a JS identifier (contains "@", a
+  // space, a "/", ...) looks like it is carrying data, so it is
+  // pseudonymized the same way the identical string would be pseudonymized
+  // as a value - a probe emitting `{"someone@example.com": {...}}` must
+  // redact, not throw. A key that IS identifier-shaped but simply is not
+  // on the allowlist is, per the insight driving this fix, far more
+  // likely a legitimate structural field nobody told this file about yet
+  // than it is personal data - silently renaming it would hide that
+  // mistake behind a fingerprint that still "looks" fine. So it throws,
+  // loudly, naming the key and its exact path, so record.mjs surfaces it
+  // as a probe failure at record time instead of a mangled recording
+  // discovered later.
+  const redactKey = (k, keyPath) => {
     if (isNumericSegment(k)) return k;
     if (STRUCTURAL_KEY_NAMES.has(k.toLowerCase())) return k;
-    const scrubbed = scrubText(k);
-    if (scrubbed !== k) return scrubbed;
-    return pseudoGenericKey(k);
+
+    if (!JS_IDENTIFIER_RE.test(k)) {
+      const scrubbed = scrubText(k);
+      if (scrubbed !== k) return scrubbed;
+      return pseudoGenericKey(k);
+    }
+
+    throw new Error(
+      `redact(): unrecognized object key "${k}" at ${describeKeyPath([...keyPath, k])}. ` +
+        `This key is identifier-shaped, so it is almost certainly a structural field a ` +
+        `probe emits, not personal data - add "${k.toLowerCase()}" to STRUCTURAL_KEY_NAMES ` +
+        `in research/redact.mjs. If it can actually hold personal data, restructure the ` +
+        `probe so that data never becomes a JSON object key.`
+    );
   };
 
   const nearestNonNumericAncestor = (keyPath) =>
@@ -238,7 +315,7 @@ export function newRedactor() {
         const out = {};
         const usedKeys = new Set();
         for (const [k, v] of Object.entries(value)) {
-          const redactedKey = redactKey(k);
+          const redactedKey = redactKey(k, keyPath);
           // Guarantee the key SET SIZE survives even under adversarial
           // collisions (review finding 1.13, `__proto__`, plus any
           // redaction-induced collision): never let two distinct original
