@@ -1,0 +1,15 @@
+{
+  "probe": "00-hello",
+  "args": [
+    "user1@example.com"
+  ],
+  "seconds": 0.144,
+  "shape": "{accountCount:number,argvEcho:[string],mailReachable:boolean}",
+  "data": {
+    "mailReachable": true,
+    "accountCount": 5,
+    "argvEcho": [
+      "user1@example.com"
+    ]
+  }
+}

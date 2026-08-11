@@ -1,0 +1,19 @@
+{
+  "probe": "01-argv-modes",
+  "args": [
+    "<str len=3 chars=ascii>",
+    "<str len=3 chars=ascii>"
+  ],
+  "seconds": 0.035,
+  "shape": "{firstIsSeparator:boolean,mode:string,rawArgv:[string],rawArgvLength:number}",
+  "data": {
+    "mode": "file",
+    "rawArgv": [
+      "<str len=2 chars=ascii>",
+      "<str len=3 chars=ascii>",
+      "<str len=3 chars=ascii>"
+    ],
+    "rawArgvLength": 3,
+    "firstIsSeparator": true
+  }
+}

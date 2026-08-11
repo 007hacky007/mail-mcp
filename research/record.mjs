@@ -1,0 +1,49 @@
+// Usage: node research/record.mjs <probe-name> [args...]
+// Runs a probe, redacts the result, prints it, and writes results/<name>.json.
+import { writeFileSync, mkdirSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { runProbe } from "./harness.mjs";
+import { redact } from "./redact.mjs";
+import { shapeOf } from "./shape.mjs";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const RESULTS = resolve(HERE, "results");
+
+const [name, ...args] = process.argv.slice(2);
+if (!name) {
+  console.error("usage: node research/record.mjs <probe-name> [args...]");
+  process.exit(2);
+}
+
+const result = runProbe(name, args);
+if (!result.ok) {
+  console.error(`probe ${name} failed after ${result.seconds.toFixed(2)}s:\n${result.error}`);
+  process.exit(1);
+}
+
+// redact() throws on an object key it does not recognize (see
+// STRUCTURAL_KEY_NAMES in research/redact.mjs) - deliberately, so a probe
+// author is told to declare the new field rather than getting a silently
+// mangled fingerprint. The whole record is built inside one try so that a
+// throw is caught before anything reaches disk: no partial recording, and
+// no fallback to writing unredacted data under any circumstances.
+let record;
+try {
+  record = {
+    probe: name,
+    args: redact(args),
+    seconds: Number(result.seconds.toFixed(3)),
+    shape: shapeOf(result.data),
+    data: redact(result.data),
+  };
+} catch (err) {
+  console.error(
+    `probe ${name}: refusing to record - redact() rejected a field in this probe's output.\n${err.message}`
+  );
+  process.exit(1);
+}
+
+mkdirSync(RESULTS, { recursive: true });
+writeFileSync(resolve(RESULTS, `${name}.json`), JSON.stringify(record, null, 2) + "\n");
+console.log(JSON.stringify(record, null, 2));
