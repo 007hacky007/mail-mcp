@@ -658,3 +658,44 @@ test("[Fix 7] the throw still names an unknown identifier-shaped key and how to 
   assert.match(message, /STRUCTURAL_KEY_NAMES/);
   assert.match(message, /research\/redact\.mjs/);
 });
+
+// Probe 08-gmail-inbox (settling the spec's Gmail claim): container names
+// are mailbox names and must go through the same folder pseudonymization as
+// every other mailbox-name context - a standard name like "[Gmail]" survives
+// verbatim (it is the entire signal this probe exists to detect), a personal
+// folder name does not.
+test("containerNames entries are treated as folder names", () => {
+  const out = newRedactor()({
+    accounts: [
+      {
+        name: "Work Stuff",
+        containerNames: ["[Gmail]", "Client Projects 2026"],
+      },
+    ],
+  });
+  assert.deepEqual(out.accounts[0].containerNames[0], "[Gmail]");
+  assert.match(out.accounts[0].containerNames[1], /^Folder \d+$/);
+});
+
+test("gmail-inbox probe structural keys are declared", () => {
+  // Throws on any undeclared identifier-shaped key, so surviving redact()
+  // IS the assertion.
+  const out = newRedactor()({
+    accounts: [
+      {
+        name: "acct",
+        enabled: true,
+        fetchOk: true,
+        isGmailStyle: false,
+        totalMailboxes: 27,
+        maxDepth: 0,
+        nestedCount: 0,
+        containerNames: [],
+        literalInbox: { flatLookupInbox: true, messageCount: 3, unreadCount: 1 },
+        allMail: { flatLookupAllMail: false, found: false },
+        important: { found: false },
+      },
+    ],
+  });
+  assert.equal(out.accounts[0].literalInbox.messageCount, 3);
+});

@@ -28,6 +28,10 @@ const ACCOUNT_LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 // both leaked before - the original set only covered the *Names synonyms.
 const FOLDER_KEYS = new Set([
   "mailboxes", "boxes", "children", "mailboxnames", "foldernames", "boxnames",
+  // 08-gmail-inbox: names of mailboxes that contain other mailboxes. Same
+  // mailbox-name context as the rest of this set - a standard name (the
+  // "[Gmail]" signal the probe exists to detect) survives, others pseudonymize.
+  "containernames",
 ]);
 const ACCOUNT_ARRAY_KEYS = new Set(["accounts", "accountnames"]);
 
@@ -164,6 +168,7 @@ const STRUCTURAL_KEY_NAMES = new Set([
   // research/probes/08-gmail-inbox.js (Task 9)
   "totalmailboxes", "isgmailstyle", "literalinbox", "allmail", "important",
   "flatlookupinbox", "flatlookupallmail", "containernames",
+  "maxdepth", "nestedcount",
   // research/probes/09-unicode-dates.js (Task 9)
   "sampled", "nonasciisubjects", "astralsubjects", "emptysubjects",
   "longestsubjectchars", "dateisdateobject", "dateisoroundtrip",

@@ -1,0 +1,136 @@
+{
+  "probe": "08-gmail-inbox",
+  "args": [],
+  "seconds": 20.287,
+  "shape": "{\"accounts\":[{\"allMail\":{\"flatLookupAllMail\":boolean,\"found\":boolean},\"containerNames\":[],\"enabled\":boolean,\"fetchError\":string,\"fetchOk\":boolean,\"important\":{\"found\":boolean},\"isGmailStyle\":boolean,\"literalInbox\":{\"flatLookupInbox\":boolean,\"messageCount\":number,\"unreadCount\":number},\"maxDepth\":number,\"name\":string,\"nestedCount\":number,\"totalMailboxes\":number}|{\"allMail\":{\"flatLookupAllMail\":boolean,\"found\":boolean},\"containerNames\":[string],\"enabled\":boolean,\"fetchError\":string,\"fetchOk\":boolean,\"important\":{\"found\":boolean},\"isGmailStyle\":boolean,\"literalInbox\":{\"flatLookupInbox\":boolean,\"messageCount\":number,\"unreadCount\":number},\"maxDepth\":number,\"name\":string,\"nestedCount\":number,\"totalMailboxes\":number}]}",
+  "successProfile": {
+    "accounts[name=Account A].fetchOk": true,
+    "accounts[name=Account B].fetchOk": true,
+    "accounts[name=Account C].fetchOk": true,
+    "accounts[name=Account D].fetchOk": true,
+    "accounts[name=Account E].fetchOk": true
+  },
+  "data": {
+    "accounts": [
+      {
+        "name": "Account A",
+        "enabled": true,
+        "isGmailStyle": false,
+        "fetchOk": true,
+        "fetchError": "<str len=0 chars=ascii>",
+        "totalMailboxes": 33,
+        "maxDepth": 1,
+        "nestedCount": 1,
+        "containerNames": [
+          "Folder 1"
+        ],
+        "literalInbox": {
+          "flatLookupInbox": true,
+          "messageCount": 17487,
+          "unreadCount": 0
+        },
+        "allMail": {
+          "flatLookupAllMail": false,
+          "found": false
+        },
+        "important": {
+          "found": false
+        }
+      },
+      {
+        "name": "Account B",
+        "enabled": true,
+        "isGmailStyle": true,
+        "fetchOk": true,
+        "fetchError": "<str len=0 chars=ascii>",
+        "totalMailboxes": 28,
+        "maxDepth": 1,
+        "nestedCount": 1,
+        "containerNames": [
+          "Folder 2"
+        ],
+        "literalInbox": {
+          "flatLookupInbox": true,
+          "messageCount": 52147,
+          "unreadCount": 0
+        },
+        "allMail": {
+          "flatLookupAllMail": false,
+          "found": false
+        },
+        "important": {
+          "found": false
+        }
+      },
+      {
+        "name": "Account C",
+        "enabled": false,
+        "isGmailStyle": false,
+        "fetchOk": true,
+        "fetchError": "<str len=0 chars=ascii>",
+        "totalMailboxes": 0,
+        "maxDepth": 0,
+        "nestedCount": 0,
+        "containerNames": [],
+        "literalInbox": {
+          "flatLookupInbox": false,
+          "messageCount": -1,
+          "unreadCount": -1
+        },
+        "allMail": {
+          "flatLookupAllMail": false,
+          "found": false
+        },
+        "important": {
+          "found": false
+        }
+      },
+      {
+        "name": "Account D",
+        "enabled": false,
+        "isGmailStyle": false,
+        "fetchOk": true,
+        "fetchError": "<str len=0 chars=ascii>",
+        "totalMailboxes": 0,
+        "maxDepth": 0,
+        "nestedCount": 0,
+        "containerNames": [],
+        "literalInbox": {
+          "flatLookupInbox": false,
+          "messageCount": -1,
+          "unreadCount": -1
+        },
+        "allMail": {
+          "flatLookupAllMail": false,
+          "found": false
+        },
+        "important": {
+          "found": false
+        }
+      },
+      {
+        "name": "Account E",
+        "enabled": false,
+        "isGmailStyle": false,
+        "fetchOk": true,
+        "fetchError": "<str len=0 chars=ascii>",
+        "totalMailboxes": 0,
+        "maxDepth": 0,
+        "nestedCount": 0,
+        "containerNames": [],
+        "literalInbox": {
+          "flatLookupInbox": false,
+          "messageCount": -1,
+          "unreadCount": -1
+        },
+        "allMail": {
+          "flatLookupAllMail": false,
+          "found": false
+        },
+        "important": {
+          "found": false
+        }
+      }
+    ]
+  }
+}

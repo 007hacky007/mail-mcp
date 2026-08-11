@@ -105,13 +105,32 @@ measurements and is wrong in three places. Fix the spec or trust this file.
    permitted.
 2. **Sections 3.2 and 11, scaling.** The spec extrapolates linearly to about 25s
    at 100k messages. Reality is worse than linear; see above.
-3. **Gmail's virtual INBOX. UNRESOLVED, and it affects inbox resolution.** The
-   spec claims, inheriting from upstream, that `All Mail` is nested inside a
-   `[Gmail]` container and does not resolve by a flat lookup. On this machine
-   **no account exposes an `All Mail` mailbox at all**, and the Gmail-style
-   account's 27 mailboxes are all flat at depth 0. Settle this with a probe
-   before implementing any Gmail-specific inbox handling. Do not implement the
-   spec's version on faith.
+3. **Gmail's virtual INBOX. SETTLED by direct measurement, 2026-08-11.** The
+   spec claims, inheriting from upstream, that a Gmail account's literal
+   `INBOX` holds roughly nothing, real mail lives in `All Mail` / `Important`
+   nested inside a `[Gmail]` container, and a flat mailbox lookup fails.
+   `research/probes/08-gmail-inbox.js` (recorded in
+   `research/results/08-gmail-inbox.json`) asked exactly that question,
+   per account, of a confirmed Gmail-backed account (server name matched, not
+   guessed from mailbox names). Every claim failed on this machine:
+
+   - The Gmail account's literal `INBOX` resolves by flat `byName("INBOX")`
+     and holds 52,147 messages, the largest INBOX on the machine.
+   - `All Mail` exists nowhere: not by flat lookup, not anywhere in a full
+     recursive walk of all 28 of the account's mailboxes.
+   - `Important` exists nowhere either.
+   - The only mailbox containing other mailboxes is an ordinary user folder;
+     there is no `[Gmail]` (or any other) grouping container.
+
+   The likely cause is Gmail's IMAP folder-subscription settings, which can
+   hide `[Gmail]`-prefixed folders from IMAP clients entirely; this was not
+   confirmed and does not need to be. **Design decision:** the server does no
+   Gmail-specific inbox handling. The inbox is the account's `INBOX` mailbox,
+   resolved flat and validated against the enumerated mailbox list like every
+   other mailbox. A machine whose Gmail account does expose `[Gmail]`
+   containers still works, because mailboxes are always enumerated and
+   resolved by full path, never assumed; its `All Mail` would simply appear
+   in the tree like any other mailbox.
 
 ## Open questions for the implementation
 
