@@ -184,9 +184,10 @@ construction - `stdio: ["ignore", "pipe", "pipe"]` discards the child's
 stdin and captures stdout/stderr separately, and `JSON.parse(result.stdout)`
 is the only thing that turns captured stdout into a value.
 
-**Verified**, on the success path: all three probes recorded so far
-(`00-hello`, `01-argv-modes`, `07-coldstart`) returned `ok: true` with
-`data` parsed straight from stdout - see `research/results/*.json`.
+**Verified**, on the success path: all four probes recorded so far
+(`00-hello`, `01-argv-modes`, `07-coldstart`, `12-message-sizes`) returned
+`ok: true` with `data` parsed straight from stdout - see
+`research/results/*.json`.
 
 The nonzero-exit case, generically (not Mail-specific - a thrown error
 inside any JXA `run()`), **verified** directly:
@@ -241,11 +242,18 @@ kills the child and sets `result.error` with code `ENOBUFS`.
 
 **Verified.** Rather than assert how common a message over 1 MB is,
 `research/probes/12-message-sizes.js` bulk-fetches `messageSize()` (a
-Mail-reported size in bytes; fetching it for every message in a mailbox is
-one Apple Event, not one per message - a future document in this archive
-covers bulk property fetches in general) for an entire mailbox and reduces
-it to a distribution. Recorded against the largest enabled account's INBOX
-(`messageCount` 17,486; `research/results/12-message-sizes.json`):
+Mail-reported size in bytes) for an entire mailbox and reduces it to a
+distribution. That bulk fetch - all 17,486 `messageSize` values - completed
+in 2.064 seconds (`research/results/12-message-sizes.json`, `seconds`
+field), which is only consistent with a small, constant number of Apple
+Events, not one per message: 17,486 separate round trips into Mail.app
+could not finish in two seconds at any plausible per-event cost.
+`[unverified]` whether the true count is exactly one - a wall-clock figure
+alone cannot distinguish "one Apple Event" from "a handful" - a later
+document in this archive (`05-search.md`) measures bulk-fetch cost per
+property directly and can state the exact count. Recorded against the
+largest enabled account's INBOX (`messageCount` 17,486;
+`research/results/12-message-sizes.json`):
 
 | Statistic | Value |
 |---|---|
@@ -428,8 +436,9 @@ second guarantee is what level 1 is for.
 default (`DEFAULT_TIMEOUT_MS = 120_000`, 120 seconds - versus upstream's
 30-second default for a live MCP tool call) chosen because research probes
 are trivial, individually-run reads with no client waiting on a strict
-budget. None of the three probes recorded so far (`00-hello`,
-`01-argv-modes`, `07-coldstart`) have come anywhere near either timeout.
+budget. None of the four probes recorded so far (`00-hello`,
+`01-argv-modes`, `07-coldstart`, `12-message-sizes`, the slowest at 2.06s)
+have come anywhere near either timeout.
 This is a real gap, not an oversight to gloss over: a bulk fetch over a
 large mailbox, or any future write operation, is exactly the kind of
 long-running, genuinely-abortable-from-inside-Mail operation the two-level
