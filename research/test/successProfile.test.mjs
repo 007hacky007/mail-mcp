@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { collectSuccessProfile, diffSuccessProfile } from "../successProfile.mjs";
+import {
+  collectSuccessProfile,
+  diffSuccessProfile,
+  SuccessProfileCollisionError,
+} from "../successProfile.mjs";
+import { collectOkFlags } from "../failurePaths.mjs";
 import { redact } from "../redact.mjs";
 
 // Fix round 2 (task-5-rereview.md, Fix C): unit coverage for the success-
@@ -309,4 +314,194 @@ test("an item whose identity field is wrapped in this project's {ok,value} conve
     "accounts[name=Account A].name.ok": true,
     "accounts[name=Account A].enabled.ok": true,
   });
+});
+
+// Fix round 4 (task-5-rereview-3.md section 2, Medium but permanent): two
+// array items whose identity values redact to the SAME string collapsed onto
+// one key of the flat map, and the map silently kept whichever was written
+// last. See research/successProfile.mjs's header for the whole defect and
+// for why it is now REFUSED rather than disambiguated.
+//
+// The two account names below are FICTIONAL and are the re-reviewer's own
+// pair: both 5 characters, both ascii, neither email-shaped, so
+// research/redact.mjs's generic fallback maps BOTH to the identical
+// "<str len=5 chars=ascii>" descriptor. `enabled.ok` on the FIRST account is
+// the flag the "later" run regresses.
+const collidingAccounts = (firstAccountEnabledOk) => ({
+  accounts: [
+    {
+      name: { ok: true, value: "Work1" },
+      enabled: { ok: firstAccountEnabledOk },
+      mailboxCount: { ok: true },
+    },
+    { name: { ok: true, value: "Home2" }, enabled: { ok: true }, mailboxCount: { ok: true } },
+  ],
+});
+
+// The exact scenario the re-reviewer executed: a "day 0" baseline where both
+// colliding accounts are healthy, and a later run where the FIRST account's
+// enabled.ok has genuinely flipped to false while still colliding with the
+// second. Before this fix, collectSuccessProfile returned 3 entries instead
+// of 6 and diffSuccessProfile returned ZERO diffs - permanently, since the
+// collision was already in effect when the baseline was recorded. The
+// property asserted here is the one that matters: this scenario can no
+// longer end in "no differences found", by any route.
+test("the colliding-regression scenario fails loudly instead of reporting zero diffs", () => {
+  const baseline = redact(collidingAccounts(true));
+  const live = redact(collidingAccounts(false));
+
+  // Confirm the collision is real in this fixture (both identities redact to
+  // the same descriptor) rather than assuming redact() still behaves that way.
+  assert.equal(baseline.accounts[0].name.value, baseline.accounts[1].name.value);
+  assert.match(baseline.accounts[0].name.value, /^<str len=5 chars=ascii>$/);
+
+  // Neither side can be turned into a profile at all, so the comparison that
+  // used to return [] cannot even be reached.
+  assert.throws(() => collectSuccessProfile(baseline), SuccessProfileCollisionError);
+  assert.throws(() => collectSuccessProfile(live), SuccessProfileCollisionError);
+
+  // And why refusing at COLLECTION time is the only defense that works: the
+  // collapsed 3-entry maps the old code produced are genuinely identical to
+  // each other, so no diff-time check could ever have caught this - the
+  // regressed account's paths simply are not in either map.
+  const collapsedBaseline = {
+    "accounts[name=<str len=5 chars=ascii>].name.ok": true,
+    "accounts[name=<str len=5 chars=ascii>].enabled.ok": true,
+    "accounts[name=<str len=5 chars=ascii>].mailboxCount.ok": true,
+  };
+  assert.deepEqual(diffSuccessProfile(collapsedBaseline, { ...collapsedBaseline }), []);
+});
+
+// A baseline must not be recordable in a silently-broken state either: the
+// collision has to be caught even when nothing has regressed yet, which is
+// what stops research/record.mjs from writing a recording whose coverage is
+// already reduced (record.mjs computes the profile inside its own try and
+// refuses to write when it throws).
+test("a collision with NO regression present is refused too, so a broken baseline cannot be recorded", () => {
+  const healthy = redact(collidingAccounts(true));
+  assert.throws(() => collectSuccessProfile(healthy), SuccessProfileCollisionError);
+});
+
+// The failure has to be actionable (name what collided) and safe (name it
+// without leaking personal data). Identity values reaching this module are
+// already redacted - record.mjs and verify.mjs both compute the profile from
+// redacted data - so quoting a path is safe, and this asserts it against the
+// real redact() rather than trusting that argument in prose.
+// node:assert's throws() returns nothing, so the error itself has to be
+// captured to assert on its message.
+const captureThrow = (fn) => {
+  try {
+    fn();
+  } catch (err) {
+    return err;
+  }
+  assert.fail("expected a throw, got none");
+};
+
+test("the collision failure names the colliding identity and leaks neither original name", () => {
+  const err = captureThrow(() => collectSuccessProfile(redact(collidingAccounts(true))));
+  assert.equal(err.name, "SuccessProfileCollisionError");
+  assert.match(err.message, /collision/);
+  assert.match(err.message, /accounts\[name=<str len=5 chars=ascii>\]/);
+  assert.doesNotMatch(err.message, /Work1/);
+  assert.doesNotMatch(err.message, /Home2/);
+});
+
+// The refusal replaces a disambiguation scheme, so it carries the same
+// stability obligation a disambiguated key would have had: the same input
+// must always produce the same outcome, not an intermittent one that shows
+// up on some runs and not others.
+test("the collision refusal is deterministic: identical input refuses identically twice", () => {
+  const first = captureThrow(() => collectSuccessProfile(redact(collidingAccounts(true))));
+  const second = captureThrow(() => collectSuccessProfile(redact(collidingAccounts(true))));
+  assert.equal(first.name, second.name);
+  assert.equal(first.message, second.message);
+});
+
+// Precision, not just loudness: two items may share an identity and lose
+// NOTHING, because neither contributes an ok-style flag. This is not
+// hypothetical - research/results/03-mailboxes.json's real data contains two
+// sibling mailboxes both literally named "Junk" (section 3 of
+// docs/apple-mail/03-object-model.md), and no mailbox entry carries an
+// ok-style flag today. Refusing there would block a re-recording for no
+// gain, so the check fires on lost COVERAGE, never on a duplicate identity
+// by itself.
+test("two items sharing an identity but contributing no flags are not refused", () => {
+  const profile = collectSuccessProfile({
+    fetchOk: true,
+    mailboxes: [
+      { path: "Junk", messageCount: 12 },
+      { path: "Junk", messageCount: 3 },
+    ],
+  });
+  assert.deepEqual(profile, { fetchOk: true });
+});
+
+// The re-reviewer's own suggested cross-check, as an invariant: for any
+// output with no collision, the number of ok-style flags that EXIST (counted
+// by research/failurePaths.mjs's collectOkFlags, which uses no paths at all)
+// equals the number of paths the profile holds. collectSuccessProfile
+// asserts this internally as a backstop; this pins the invariant itself so a
+// future traversal change cannot quietly break it.
+test("a collision-free profile holds exactly one path per ok-style flag that exists", () => {
+  const data = {
+    fetchOk: true,
+    accounts: [
+      { name: "Account A", enabled: { ok: true }, mailboxCount: { ok: false } },
+      { name: "Account B", enabled: { ok: false }, mailboxCount: { ok: true } },
+    ],
+    props: { id: { ok: true }, source: { ok: false } },
+    outlook: true,
+  };
+  const flags = [];
+  collectOkFlags(data, flags);
+  assert.equal(flags.length, 7);
+  assert.equal(Object.keys(collectSuccessProfile(data)).length, flags.length);
+});
+
+// Fix round 4 (task-5-rereview-3.md section 8, Low): the rename merge paired
+// ANY disappearing path with ANY appearing path of the same shape and value,
+// so two unrelated simultaneous events were reported as one "renamed" - a
+// claim of identity continuity the data cannot support. Reproduces the
+// re-reviewer's case: one account gone, a DIFFERENT account new, both
+// carrying the same flag value, in a list where that value is not
+// distinctive at all.
+test("an unrelated removal plus addition is reported as two events, NOT as a rename", () => {
+  const before = {
+    accounts: [
+      { name: "Account A", enabledOk: true },
+      { name: "Account B", enabledOk: true },
+      { name: "Account C", enabledOk: true },
+    ],
+  };
+  const after = {
+    accounts: [
+      { name: "Account A", enabledOk: true },
+      { name: "Account B", enabledOk: true },
+      { name: "Account F", enabledOk: true },
+    ],
+  };
+  const diffs = diffSuccessProfile(collectSuccessProfile(before), collectSuccessProfile(after));
+  assert.equal(diffs.length, 2);
+  assert.ok(!diffs.some((d) => /renamed/.test(d)), `must not claim a rename: ${diffs.join(" | ")}`);
+  assert.ok(diffs.some((d) => /name=Account C/.test(d) && /missing/.test(d)));
+  assert.ok(diffs.some((d) => /name=Account F/.test(d) && /new in this replay/.test(d)));
+});
+
+// The other half of the same rule: when the pairing IS unambiguous - the
+// (shape, value) combination occurs exactly once in the recording and
+// exactly once in the replay, so nothing else could be the source or the
+// target - the rename label is still earned and still reported as one line.
+// Here the renamed mailbox's readOk is false while its neighbour's is true,
+// so the disappearance and the appearance are each other's only possible
+// counterpart.
+test("a genuine rename is still labeled a rename when the pairing is unambiguous", () => {
+  const before = { mailboxes: [{ path: "Keep", readOk: true }, { path: "Old", readOk: false }] };
+  const after = { mailboxes: [{ path: "Keep", readOk: true }, { path: "New", readOk: false }] };
+  const diffs = diffSuccessProfile(collectSuccessProfile(before), collectSuccessProfile(after));
+  assert.equal(diffs.length, 1);
+  assert.match(diffs[0], /renamed/);
+  assert.match(diffs[0], /path=Old/);
+  assert.match(diffs[0], /path=New/);
+  assert.doesNotMatch(diffs[0], /path=Keep/);
 });

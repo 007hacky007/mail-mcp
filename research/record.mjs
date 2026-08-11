@@ -7,7 +7,7 @@ import { runProbe } from "./harness.mjs";
 import { redact } from "./redact.mjs";
 import { shapeOf } from "./shape.mjs";
 import { requireStorableArgs } from "./argStorability.mjs";
-import { collectSuccessProfile } from "./successProfile.mjs";
+import { collectSuccessProfile, SuccessProfileCollisionError } from "./successProfile.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RESULTS = resolve(HERE, "results");
@@ -74,9 +74,17 @@ try {
     data: redactedData,
   };
 } catch (err) {
-  console.error(
-    `probe ${name}: refusing to record - redact() rejected a field in this probe's output.\n${err.message}`
-  );
+  // Two different refusals share this catch, and they must not be confused
+  // for each other in the output: redact() rejecting an undeclared field, and
+  // (fix round 4, task-5-rereview-3.md) collectSuccessProfile refusing to
+  // build a profile whose coverage a path collision has quietly reduced -
+  // see research/successProfile.mjs. Blaming redact() for the latter would
+  // send the reader to the wrong file with the wrong remedy.
+  const cause =
+    err instanceof SuccessProfileCollisionError
+      ? "this probe's output cannot be profiled without losing coverage."
+      : "redact() rejected a field in this probe's output.";
+  console.error(`probe ${name}: refusing to record - ${cause}\n${err.message}`);
   process.exit(1);
 }
 

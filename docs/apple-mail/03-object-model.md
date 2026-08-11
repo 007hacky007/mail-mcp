@@ -1121,38 +1121,81 @@ deterministic function of first-seen order within one call, never random
 or process-state-dependent, so "the same input" genuinely produces "the
 same identity" every time.
 
-**One accepted, documented residual limitation, found while verifying the
-above:** `research/probes/02-accounts.js`'s account names, once redacted,
-are sometimes a proper pseudonym (`user4@example.com`, when the real name
+**An identity COLLISION was the one remaining way this detector could go
+permanently blind - now it refuses instead (fix round 4).**
+`research/probes/02-accounts.js`'s account names, once redacted, are
+sometimes a proper pseudonym (`user4@example.com`, when the real name
 happens to be email-shaped) and sometimes a generic length/character-class
 descriptor (`<str len=5 chars=ascii>`, `research/redact.mjs`'s fallback for
 a string it does not otherwise recognize) - and a descriptor is **not**
-guaranteed unique: two different real accounts whose names happen to share
-a length and character class would collide onto the identical
-identity-keyed path. Verified this does not currently happen (this
-machine's 5 accounts' descriptors are 3 unique pseudonyms and 2
-different-length descriptors - no collision), and accepted rather than
-worked around further, because rejecting a generic descriptor as "not a
-real identity" would fall all the way back to the index for exactly the
-non-email-shaped account names this fix exists to protect, silently
-reintroducing the bug this whole round closes. Narrower than the
-bug it replaces: a descriptor collision requires a coincidence (two
-accounts of the same redacted name length and character class); the
-index-based bug fired on every ordinary list edit, unconditionally.
+unique: two real accounts whose names share a length and character class
+redact to the identical descriptor. Fix round 3 accepted that risk and
+documented it; the re-reviewer then demonstrated it is worse than
+"reduced precision." Two accounts named `Work1` and `Home2` (both 5 ascii
+characters, neither email-shaped) collapse onto ONE flat-map key, so
+`collectSuccessProfile` returned **3 entries where 6 flags existed** - and
+when the first account's `enabled.ok` then genuinely flipped `true` to
+`false` while still colliding, `diffSuccessProfile` returned **zero diffs**,
+permanently: the collision was already in effect when the baseline was
+recorded, so the regressed account's paths were never in the baseline at
+all, and the same collision recurs identically on every later replay. A
+real regression in Mail's object model becomes invisible forever, silently,
+in the component whose only job is catching exactly that.
 
-**Renaming an item is a real, honest change worth reporting - made
-readable rather than alarming.** An identity-keyed path changing when its
+`collectSuccessProfile` now **throws** the moment two items would write the
+same path (`SuccessProfileCollisionError`, naming the colliding path -
+already-redacted, so it names a descriptor or a pseudonym, never a real
+name). `research/record.mjs` refuses to write the recording, exactly as it
+already does for an unstorable argument or a field `redact()` rejects;
+`research/verify.mjs` turns it into a `FAIL` line for that probe. Refuse
+rather than disambiguate (for example by appending an occurrence index so
+both colliding items survive) because a disambiguated key must be **stable
+across runs for the same items**, and no stable discriminator exists here:
+an occurrence index is a function of array order, which is precisely what
+fix round 3 stopped keying on (a reorder, or a third colliding item
+appearing ahead of the pair, swaps the two keys and fabricates exactly the
+kind of `true<->false` flip pair that round eliminated), while a
+content-derived discriminator changes precisely when the item regresses -
+unstable in the one situation the mechanism exists for. Refusing also closes
+the defect at its root rather than mitigating it: a collided baseline can
+never be recorded, so there is no permanent-false-pass path left to reason
+about. The cost is stated plainly rather than hidden: on a machine where two
+items genuinely collide, that probe cannot be recorded or verified until the
+identity source is fixed, and the error message names the remedy (emit the
+identity under a key `redact.mjs` pseudonymizes uniquely, or add a per-item
+field that is unique by construction). The detector fires on lost
+**coverage**, not on a duplicate identity by itself: two items that share an
+identity but contribute no ok-style flags lose nothing and are not refused -
+which matters, because this project's own `03-mailboxes` data really does
+contain two sibling mailboxes both literally named `Junk` (section 3) and no
+mailbox entry carries an ok-style flag today.
+
+**Renaming an item is a real change worth reporting, but "renamed" is a
+claim the profile can rarely support - so it is now made only when the
+pairing is unambiguous.** An identity-keyed path changing when its
 underlying item is renamed is correct behavior, not a defect: the flags
-genuinely moved to a new location. Reporting it as two disconnected
-`missing`/`new` lines would read exactly like data loss, though, so
-`diffSuccessProfile` now recognizes the pattern - a path disappearing and a
-structurally-identical path (same field name used for identity, same
-surrounding structure) appearing elsewhere, carrying the identical recorded
-value - and reports it as one line: `<old path> -> <new path>: renamed
-(value unchanged: <value>)`. If the value also changed, the pair is
-deliberately **not** merged - reporting a plain missing line and a plain
-new line separately, since guessing "renamed and regressed" in one line
-would be less honest than stating both facts plainly.
+genuinely moved. Reporting that as two disconnected `missing`/`new` lines
+reads like data loss, so fix round 3 merged a disappearing path and a
+structurally-identical appearing path carrying the identical value into one
+line: `<old path> -> <new path>: renamed (value unchanged: <value>)`. The
+re-reviewer showed that merge was too eager: one account removed and a
+**different, unrelated** account added in the same interval, both carrying
+the same flag value, were reported as a rename - asserting an identity
+continuity that never existed. A success profile holds nothing but booleans,
+so it can never prove continuity; fix round 4 therefore requires the pairing
+to be the only one possible before the label is used, in the only sense this
+data supports: the (structural shape, value) combination must occur
+**exactly once** in the recording and **exactly once** in the replay, which
+makes the disappearance and the appearance each other's sole candidate. When
+several paths share a shape and value - and this project's real
+`02-accounts` data is seven all-true flags on every account, so every
+account matches every other one - pairing any two of them is a coin flip
+dressed up as a conclusion, and the two events are reported plainly instead
+as what they demonstrably are: one item gone, one item new. The trade-off is
+deliberate: a rename inside a uniform list now costs two lines instead of
+one, and claims nothing false. If the value also changed, the pair is not
+merged either (the value is part of the pairing key), since guessing
+"renamed and regressed" would hide the regression.
 
 **Tightened, as a smaller second fix: the flag matcher itself.** The
 original `/ok$/i` suffix test is case-insensitive, so it cannot tell
@@ -1178,9 +1221,20 @@ changed (asserts it is NOT merged into one misleadingly-clean rename line),
 `outlook` correctly excluded, a pseudonym-stability check against the real
 `redact()` function, a check that an identity-keyed path never contains
 the pre-redaction original string, and the identity-less-item fallback to
-index. `npm test` reports 118 (102 before this fix round plus these 16).
+index. Fix round 4 added eight more, all fixture-only too: the
+colliding-regression scenario asserted to fail loudly rather than report
+zero diffs, a collision refused even with no regression present (so a
+baseline cannot be recorded broken), the refusal message asserted to name
+the colliding descriptor and to contain neither original name, the refusal
+asserted deterministic across two runs on identical input, two items sharing
+an identity but contributing no flags asserted **not** refused, the
+flags-exist-equals-paths-collected invariant pinned against
+`collectOkFlags`, the unrelated removal-plus-addition asserted not to be
+labeled a rename, and a genuine unambiguous rename asserted to still be one.
+`npm test` reports 126 (102 before fix round 3, 118 after it, plus these
+eight).
 
-**Re-recording was required, and confirmed.** The path-keying scheme
+**Re-recording was required for fix round 3, and confirmed.** The path-keying scheme
 itself changed (index to identity), so every previously-committed
 `successProfile` baseline using the old index-based paths is permanently
 incompatible with the new identity-based live computation - verified
@@ -1194,6 +1248,17 @@ respectively); `node research/verify.mjs` returned to `7/7` afterward, with
 real timings behind every probe (`04-message-props` and `03-mailboxes`
 both taking tens of seconds on this run, not the sub-second timing a
 failure-path replay would produce).
+
+**Fix round 4 needed no re-recording, checked rather than assumed.** Neither
+change alters the profile FORMAT: a collision-free output produces exactly
+the same paths and values as before (the collision path only ever throws),
+and the rename rule lives entirely in the comparison, not in what is stored.
+Verified against all three committed recordings that carry a
+`successProfile` by recomputing each one from its own stored `data` with the
+new code and diffing it against the stored baseline: `02-accounts` 35 paths,
+`04-message-props` 17, `12-message-sizes` 1, zero diffs each and no
+collision thrown. The other four recordings store no `successProfile` at all
+and are skipped by this check, exactly as before.
 
 ## 5. Message identity, in full
 
