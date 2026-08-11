@@ -66,11 +66,21 @@ test("pseudonymizes a bare array of account name strings", () => {
 });
 
 test("preserves numbers, booleans, nulls and timings", () => {
+  // Fix-round-2 note (see task-2-report.md "Fix round 2"): "count",
+  // "enabled" and "missing" are not real structural probe field names, so
+  // under Fix 4 their KEYS are now opaquely relabeled too (key redaction
+  // for non-structural keys is covered by dedicated tests elsewhere).
+  // This test's own purpose - primitive VALUES survive untouched - still
+  // holds regardless of what their keys become, so it is checked via
+  // Object.values() rather than by name. "seconds" is a real structural
+  // key (research/harness.mjs), so it alone is checked by name too.
   const r = newRedactor();
-  assert.deepEqual(
-    r({ count: 17484, enabled: true, missing: null, seconds: 1.0485 }),
-    { count: 17484, enabled: true, missing: null, seconds: 1.0485 }
-  );
+  const out = r({ count: 17484, enabled: true, missing: null, seconds: 1.0485 });
+  const values = Object.values(out);
+  assert.ok(values.includes(17484));
+  assert.ok(values.includes(true));
+  assert.ok(values.includes(null));
+  assert.equal(out.seconds, 1.0485);
 });
 
 test("keeps the same address stable across repeated bare and display-name occurrences", () => {
@@ -92,20 +102,36 @@ test("keeps the same address stable across repeated bare and display-name occurr
 });
 
 test("preserves array length and object key sets exactly", () => {
+  // Fix-round-2 note: "a", "b", "c", "d" are arbitrary fixture keys, not
+  // real structural probe field names, so under Fix 4 they are opaquely
+  // relabeled (not preserved by exact text) - the property this test can
+  // still guarantee for non-structural keys is key-set SIZE (never
+  // dropped), which is what it now checks. Exact-text preservation for
+  // keys that ARE structural or purely numeric is covered by dedicated
+  // tests elsewhere.
   const r = newRedactor();
   const out = r({ a: [1, 2, 3], b: { c: "x@y.com", d: 4 } });
-  assert.equal(out.a.length, 3);
-  assert.deepEqual(Object.keys(out.b).sort(), ["c", "d"]);
+  const topKeys = Object.keys(out);
+  assert.equal(topKeys.length, 2);
+  const bValue = Object.values(out).find((v) => !Array.isArray(v));
+  const aValue = Object.values(out).find((v) => Array.isArray(v));
+  assert.equal(aValue.length, 3);
+  assert.equal(Object.keys(bValue).length, 2);
 });
 
 // --- Round 2: fail-closed hardening (see task-2-review.md, all inputs are
 // fictional, never the human partner's real data) -------------------------
 
 test("[review 1.1] a bare display name under an unrecognized key does not leak", () => {
+  // Fix-round-2 note: "sender" is not on the structural-key allowlist (no
+  // probe written so far emits it), so under Fix 4 the key itself is also
+  // now opaquely relabeled, not just the value - looked up via
+  // Object.values() rather than by name.
   const r = newRedactor();
   const out = r({ sender: "Jane Roe" });
   assert.ok(!JSON.stringify(out).includes("Jane Roe"));
-  assert.match(out.sender, /^<str len=\d+ chars=ascii>$/);
+  const value = Object.values(out)[0];
+  assert.match(value, /^<str len=\d+ chars=ascii>$/);
 });
 
 test("[review 1.5] every key-based rule fires case-insensitively", () => {
@@ -180,6 +206,11 @@ test("[review 1.8] a bare string array under the trusted mailboxes/accounts keys
 });
 
 test("[review 1.9] an object key carrying an address or a display name does not leak", () => {
+  // Fix-round-2 note: "unread"/"flagged" are not on the structural-key
+  // allowlist either, so those nested keys are now also opaquely
+  // relabeled under Fix 4 - the numeric values are looked up positionally
+  // rather than by name, since the property under test (numbers are not
+  // personal data and remain reachable) doesn't depend on their key text.
   const r = newRedactor();
   const out = r({ "jane.roe@personalmail.com": { unread: 3 }, "Jane Roe": { flagged: 1 } });
   const keys = Object.keys(out);
@@ -188,9 +219,9 @@ test("[review 1.9] an object key carrying an address or a display name does not 
   assert.ok(!keys.some((k) => k.includes("Jane Roe")));
   // Values under the redacted keys must still be reachable and untouched
   // (numbers are not personal data).
-  const values = Object.values(out);
-  assert.ok(values.some((v) => v.unread === 3));
-  assert.ok(values.some((v) => v.flagged === 1));
+  const innerValues = Object.values(out).map((inner) => Object.values(inner)[0]);
+  assert.ok(innerValues.includes(3));
+  assert.ok(innerValues.includes(1));
 });
 
 test("[review 1.10] a non-ASCII / IDN email address does not leak (review's exact input)", () => {
@@ -211,20 +242,35 @@ test("[review 1.11] an email address with no dotted TLD does not leak", () => {
 });
 
 test("[review 1.12] a live Date instance survives as a Date, not an empty object", () => {
+  // Fix-round-2 note: "when" is not a structural key, so it too is now
+  // opaquely relabeled - looked up positionally rather than by name.
   const r = newRedactor();
   const when = new Date("2026-01-01T00:00:00Z");
   const out = r({ when });
-  assert.ok(out.when instanceof Date);
-  assert.equal(out.when.getTime(), when.getTime());
+  const value = Object.values(out)[0];
+  assert.ok(value instanceof Date);
+  assert.equal(value.getTime(), when.getTime());
 });
 
-test("[review 1.13] a __proto__ key is preserved as an own property, not silently dropped", () => {
+test("[review 1.13] a __proto__ key no longer silently drops its entry (key-set size preserved)", () => {
+  // Fix-round-2 note: "__proto__" is not purely numeric and is not on the
+  // structural-key allowlist (no probe emits it), so under Fix 4's
+  // stricter policy it is now ALSO opaquely relabeled, same as any other
+  // non-structural key - it no longer survives with its literal text, by
+  // design. What still matters, and is still true, is the original
+  // structural-preservation property the finding was about: the entry is
+  // not silently dropped (key-set SIZE stays 2) and the real address in
+  // its value does not survive. The Object.defineProperty mechanism that
+  // avoids the inherited __proto__ accessor setter is exercised by every
+  // object key in this file unconditionally, not only this one.
   const r = newRedactor();
   const input = JSON.parse('{"__proto__": "jane.roe@personalmail.com", "other": 1}');
   const out = r(input);
-  assert.deepEqual(Object.keys(out).sort(), ["__proto__", "other"]);
-  assert.equal(out.other, 1);
-  assert.ok(!Object.getOwnPropertyDescriptor(out, "__proto__").value.includes("jane.roe"));
+  const keys = Object.keys(out);
+  assert.equal(keys.length, 2);
+  const values = Object.values(out);
+  assert.ok(values.includes(1));
+  assert.ok(!values.some((v) => typeof v === "string" && v.includes("jane.roe")));
 });
 
 test("[coordinator example] a subject value nested under an unrecognized leaf key does not leak", () => {
@@ -236,10 +282,113 @@ test("[coordinator example] a subject value nested under an unrecognized leaf ke
 });
 
 test("[fail closed] a key no rule has ever heard of, holding a personal-looking string, is redacted", () => {
+  // Fix-round-2 note: under Fix 4, the KEY itself ("someTotallyUnknownField")
+  // is no longer on any allowlist either, so it is opaquely relabeled too -
+  // an even stronger demonstration of "fail closed" than round 1's version
+  // of this test, which only checked the value. Looked up positionally.
   const r = newRedactor();
   const secret = "this-is-a-personal-looking-secret-string-xyz123";
   const out = r({ someTotallyUnknownField: secret });
-  assert.notEqual(out.someTotallyUnknownField, secret);
   assert.ok(!JSON.stringify(out).includes(secret));
-  assert.match(out.someTotallyUnknownField, /^<str len=\d+ chars=ascii>$/);
+  const value = Object.values(out)[0];
+  assert.notEqual(value, secret);
+  assert.match(value, /^<str len=\d+ chars=ascii>$/);
+});
+
+// --- Fix round 2 (see task-2-rereview.md; all inputs fictional, and the
+// re-review's own exact leaking inputs where specified) --------------------
+
+test("[Fix 1] VERBATIM_KEYS no longer has a content-blind escape hatch (re-review Hole A)", () => {
+  // Exact leaking inputs from task-2-rereview.md Hole A.
+  const r1 = newRedactor();
+  const out1 = r1({ status: "Jane Roe" });
+  assert.ok(!JSON.stringify(out1).includes("Jane Roe"));
+
+  const r2 = newRedactor();
+  const out2 = r2({ idType: "+1 555-123-4567" });
+  assert.ok(!JSON.stringify(out2).includes("555-123-4567"));
+
+  const r3 = newRedactor();
+  const out3 = r3({ mode: "Called Jane at noon" });
+  assert.ok(!JSON.stringify(out3).includes("Jane"));
+
+  const r4 = newRedactor();
+  const out4 = r4({ accountType: "1234-5678-9012-3456" });
+  assert.ok(!JSON.stringify(out4).includes("1234-5678-9012-3456"));
+});
+
+test("[Fix 1] every per-key validator rejects a personal-looking value and keeps its legitimate value", () => {
+  const cases = [
+    ["probe", "00-hello"],
+    ["mode", "file"],
+    ["mode", "-e"],
+    ["chars", "ascii"],
+    ["chars", "unicode"],
+    ["accountType", "personal"],
+    ["type", "string"],
+    ["idType", "number"],
+    ["sampleIdType", "boolean"],
+    ["dateGetTimeType", "object"],
+    ["firstIdType", "undefined"],
+  ];
+  const personal = "Jane Roe";
+  for (const [key, legitimateValue] of cases) {
+    const rGood = newRedactor();
+    const outGood = rGood({ [key]: legitimateValue });
+    assert.equal(
+      outGood[key],
+      legitimateValue,
+      `expected ${key}="${legitimateValue}" to survive verbatim`
+    );
+
+    const rBad = newRedactor();
+    const outBad = rBad({ [key]: personal });
+    assert.ok(
+      !JSON.stringify(outBad).includes(personal),
+      `expected ${key}="${personal}" to be redacted, got ${JSON.stringify(outBad)}`
+    );
+  }
+});
+
+test("[Fix 2] purely-numeric object keys are preserved exactly; their values are still redacted", () => {
+  // Exact input from the coordinator's fix-round-2 instructions.
+  const r = newRedactor();
+  const out = r({ "0": "Jane Roe", "1": "Bob" });
+  assert.deepEqual(Object.keys(out).sort(), ["0", "1"]);
+  assert.notEqual(out["0"], "Jane Roe");
+  assert.notEqual(out["1"], "Bob");
+  assert.ok(!JSON.stringify(out).includes("Jane Roe"));
+  assert.ok(!JSON.stringify(out).includes("Bob"));
+});
+
+test("[Fix 3] the standard-mailbox passthrough is scoped to folder context, not global (re-review Hole B)", () => {
+  const r1 = newRedactor();
+  const out1 = r1({ note: "Important" });
+  assert.notEqual(out1.note, "Important");
+
+  const r2 = newRedactor();
+  const out2 = r2({ comment: "Archive" });
+  assert.notEqual(Object.values(out2)[0], "Archive");
+
+  // Folder context still keeps a standard name verbatim, unaffected.
+  const r3 = newRedactor();
+  const out3 = r3({ mailboxes: [{ name: "Archive" }] });
+  assert.equal(out3.mailboxes[0].name, "Archive");
+});
+
+test("[Fix 4] an identifier-shaped personal key is no longer preserved by pattern (re-review Hole C)", () => {
+  // Exact leaking input from task-2-rereview.md Hole C.
+  const r = newRedactor();
+  const out = r({ JaneRoePersonalNotes: { foo: 1 }, jane_roe_2026: 5 });
+  const keys = Object.keys(out);
+  assert.ok(!keys.includes("JaneRoePersonalNotes"));
+  assert.ok(!keys.includes("jane_roe_2026"));
+  assert.equal(keys.length, 2);
+});
+
+test("[cyclic input] fails with a clear error instead of a bare RangeError", () => {
+  const r = newRedactor();
+  const obj = {};
+  obj.self = obj;
+  assert.throws(() => r(obj), /cyclic/i);
 });

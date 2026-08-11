@@ -26,31 +26,64 @@ const FOLDER_KEYS = new Set([
 ]);
 const ACCOUNT_ARRAY_KEYS = new Set(["accounts", "accountnames"]);
 
-// Round-2 architectural fix (see task-2-report.md, "Fix: invert redaction
-// to fail closed"): the original design was an ALLOWLIST OF KEY NAMES THAT
-// TRIGGER REDACTION, with scrubText as a fallback that mostly passed
-// unrecognized values straight through with only literal email patterns
-// stripped. That fails OPEN - any key or shape the rules don't recognize
-// leaks its value close to verbatim. VERBATIM_KEYS + SAFE_VALUE_PATTERN are
-// now the only escape hatch for a string that isn't caught by an
-// identity-preserving structural rule, a content-based email/address
-// match, or the standard-mailbox allowlist; everything else collapses to
-// an opaque length/class descriptor - fail closed by default.
-const VERBATIM_KEYS = new Set([
-  "probe", "mode", "ok", "type", "idtype", "accounttype", "chars", "status",
+// Fix-round-2 (task-2-rereview.md Hole A, Critical): a generic
+// VERBATIM_KEYS + character-class-and-length pattern let "Jane Roe",
+// "+1 555-123-4567" and account-number-shaped strings straight through
+// under keys like `type`/`status`/`mode` - the same allowlist-plus-
+// permissive-fallback failure the fail-closed inversion was meant to kill,
+// just one layer down. Replaced with PER-KEY VALIDATORS: a string is kept
+// verbatim only when its (lowercased) key has an entry below AND the value
+// itself satisfies that key's specific check - never a generic pattern,
+// never a length heuristic. If a later probe needs a new verbatim string
+// field, the correct move is to add a validator for that exact key here,
+// not to widen an existing one or add a generic fallback.
+const JS_TYPE_NAMES = new Set([
+  "number", "string", "boolean", "object", "undefined", "array", "function", "bigint", "symbol",
 ]);
-const SAFE_VALUE_PATTERN = /^[A-Za-z0-9 _.,:;()+-]{1,40}$/;
+const isJsTypeName = (s) => JS_TYPE_NAMES.has(s);
+const VALUE_VALIDATORS = new Map([
+  ["probe", (s) => /^[0-9]{2}-[a-z0-9-]+$/.test(s)],
+  ["mode", (s) => s === "file" || s === "-e"],
+  ["chars", (s) => s === "ascii" || s === "unicode"],
+  ["accounttype", (s) => /^[a-z]{1,12}$/.test(s)],
+  ["type", isJsTypeName],
+  ["idtype", isJsTypeName],
+  ["sampleidtype", isJsTypeName],
+  ["dategettimetype", isJsTypeName],
+  ["firstidtype", isJsTypeName],
+]);
+// Booleans and numbers are not strings, so they already pass through
+// walk()'s primitive branch untouched - `ok`, `found`, `raised`, `status`,
+// counts and timings need no entry here at all.
 
-// Object keys are, in real JXA/probe output, essentially always
-// programmer-chosen identifiers (subject, dateReceived, mailboxNames,
-// __proto__, ...) - never natural-language content. So, unlike values,
-// "looks like a plain identifier" (no "@", no spaces, no punctuation
-// beyond underscore/dollar, reasonably short) is a reasonable default-safe
-// signal for KEY text specifically (review finding 1.9: an object key can
-// itself be a real address or a display name, and the old code never
-// touched keys at all). A key that fails this pattern is treated as
-// carrying data, not schema, and is redacted the same way a value would be.
-const SAFE_KEY_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
+// Fix-round-2 (task-2-rereview.md Hole C, Part 3): SAFE_KEY_PATTERN (any
+// identifier-shaped string) let a personal string written without spaces
+// - e.g. "JaneRoePersonalNotes" - survive as an object key untouched, and
+// separately mis-redacted purely-numeric keys like "0"/"1" into
+// "redactedKeyN" even though a numeric key cannot itself be personal data
+// (breaking exact key-set preservation, which Task 3's structural-
+// fingerprint diffing depends on). Replaced with two narrow, explicit
+// checks in redactKey below: a key is kept verbatim only if it is purely
+// numeric, or it is one of the following known structural key names -
+// this file's own rule vocabulary, the VALUE_VALIDATORS keys above, and
+// the real field names research/harness.mjs and the two probes written so
+// far (00-hello.js, 01-argv-modes.js) actually emit. Extend this set, not
+// a pattern, when a new probe introduces a genuinely new structural field.
+const STRUCTURAL_KEY_NAMES = new Set([
+  // This file's own rule vocabulary
+  "subject", "name", "path", "fullpath", "accountname",
+  "mailboxes", "boxes", "accounts", "children",
+  "mailboxnames", "foldernames", "boxnames", "accountnames",
+  // The per-key value-validator table above
+  "probe", "mode", "chars", "accounttype",
+  "type", "idtype", "sampleidtype", "dategettimetype", "firstidtype",
+  // research/harness.mjs's own wrapper shape
+  "ok", "seconds", "data", "error", "status",
+  // research/probes/00-hello.js
+  "mailreachable", "accountcount", "argvecho",
+  // research/probes/01-argv-modes.js
+  "rawargv", "rawargvlength", "firstisseparator",
+]);
 
 const isNumericSegment = (s) => /^\d+$/.test(s);
 
@@ -60,6 +93,15 @@ export function newRedactor() {
   const accounts = new Map();
   const folders = new Map();
   const genericKeys = new Map();
+  // Tracks the object/array references currently on the recursion path,
+  // so a truly cyclic input (an object that is its own ancestor) fails
+  // with a clear error instead of a bare "Maximum call stack size
+  // exceeded" RangeError (task-2-rereview.md, cyclic-input note). A
+  // non-cyclic shared reference (the same object reachable via two
+  // sibling, non-nested paths - not itself a cycle) is fine: it is added
+  // on entry and removed once that branch finishes, so revisiting it from
+  // a later, unrelated branch does not falsely trigger this check.
+  const seen = new Set();
 
   const pseudoEmail = (addr) => {
     const key = addr.trim().toLowerCase();
@@ -104,13 +146,15 @@ export function newRedactor() {
   const describeSubject = (s) => `<subject len=${[...s].length} chars=${charClass(s)}>`;
   const describeGeneric = (s) => `<str len=${[...s].length} chars=${charClass(s)}>`;
 
-  // Redact an object KEY (review finding 1.9). Real schema key names are
-  // always plain identifiers, so they pass straight through; anything else
-  // might be carrying an address (routed through the same pseudonym map
-  // values use, for identity consistency) or a display name / anything
-  // else (routed to an opaque, collision-proof per-key pseudonym).
+  // Redact an object KEY (review finding 1.9). A purely-numeric key
+  // (Fix 2) or a name from the explicit structural allowlist (Fix 4) is
+  // schema, not data, and survives untouched; anything else might be
+  // carrying an address (routed through the same pseudonym map values
+  // use, for identity consistency) or a display name / anything else
+  // (routed to an opaque, collision-proof per-key pseudonym).
   const redactKey = (k) => {
-    if (SAFE_KEY_PATTERN.test(k)) return k;
+    if (isNumericSegment(k)) return k;
+    if (STRUCTURAL_KEY_NAMES.has(k.toLowerCase())) return k;
     const scrubbed = scrubText(k);
     if (scrubbed !== k) return scrubbed;
     return pseudoGenericKey(k);
@@ -129,6 +173,11 @@ export function newRedactor() {
 
     // 1. Structural, identity-preserving rules - case-insensitive (review
     // finding 1.5: every one of these used to be an exact-case `===`).
+    // pseudoFolder() internally keeps a standard mailbox name verbatim;
+    // that passthrough is only reachable via these folder-context rules
+    // (fix-round-2 Hole B: it used to also run unconditionally on every
+    // string anywhere, which let an unrelated free-text field that
+    // happened to read exactly "Important" or "Archive" survive too).
     if (keyLower === "subject") return describeSubject(s);
 
     if (
@@ -150,10 +199,7 @@ export function newRedactor() {
       return s.split("/").map((seg) => pseudoFolder(seg)).join("/");
     }
 
-    // 2. Standard mailbox names are not personal data, regardless of key.
-    if (STANDARD_MAILBOXES.has(s)) return s;
-
-    // 3. Content-based identity match (email address, or display+address),
+    // 2. Content-based identity match (email address, or display+address),
     // independent of key - this is what keeps test 1 ("mail me at
     // real.person@company.com ok" -> "mail me at user1@example.com ok")
     // working: surrounding boilerplate text around a recognized pattern
@@ -161,14 +207,12 @@ export function newRedactor() {
     const scrubbed = scrubText(s);
     if (scrubbed !== s) return scrubbed;
 
-    // 4. A narrow, explicit allowlist of structural/enum-like value
-    // fields, gated on both the key name and a conservative content
-    // pattern (no "@", no path separator, short).
-    if (keyLower !== undefined && VERBATIM_KEYS.has(keyLower) && SAFE_VALUE_PATTERN.test(s)) {
-      return s;
-    }
+    // 3. Per-key value validators (Fix 1) - the only remaining escape
+    // hatch, and it is narrow and semantic per key, not a generic pattern.
+    const validator = keyLower !== undefined ? VALUE_VALIDATORS.get(keyLower) : undefined;
+    if (validator && validator(s)) return s;
 
-    // 5. Fail closed: nothing above recognized this string as safe or as
+    // 4. Fail closed: nothing above recognized this string as safe or as
     // a known identity field, so it does not survive as text.
     return describeGeneric(s);
   };
@@ -182,33 +226,43 @@ export function newRedactor() {
     // object branch and was silently replaced with `{}`.
     if (value instanceof Date) return new Date(value.getTime());
 
-    if (Array.isArray(value)) return value.map((v, i) => walk(v, [...keyPath, String(i)]));
-
     if (value && typeof value === "object") {
-      const out = {};
-      const usedKeys = new Set();
-      for (const [k, v] of Object.entries(value)) {
-        const redactedKey = redactKey(k);
-        // Guarantee the key SET SIZE survives even under adversarial
-        // collisions (review finding 1.13, `__proto__`, plus any
-        // redaction-induced collision): never let two distinct original
-        // keys collapse onto the same output key.
-        let candidate = redactedKey;
-        let n = 2;
-        while (usedKeys.has(candidate)) candidate = `${redactedKey}__${n++}`;
-        usedKeys.add(candidate);
-        // Object.defineProperty bypasses Object.prototype's inherited
-        // __proto__ accessor setter, which a plain `out[k] = v` assignment
-        // would silently no-op through for a key literally named
-        // "__proto__" (review finding 1.13), dropping both key and value.
-        Object.defineProperty(out, candidate, {
-          value: walk(v, [...keyPath, k]),
-          writable: true,
-          enumerable: true,
-          configurable: true,
-        });
+      if (seen.has(value)) {
+        throw new Error("redact(): cyclic reference detected; refusing to redact a circular structure");
       }
-      return out;
+      seen.add(value);
+      try {
+        if (Array.isArray(value)) {
+          return value.map((v, i) => walk(v, [...keyPath, String(i)]));
+        }
+        const out = {};
+        const usedKeys = new Set();
+        for (const [k, v] of Object.entries(value)) {
+          const redactedKey = redactKey(k);
+          // Guarantee the key SET SIZE survives even under adversarial
+          // collisions (review finding 1.13, `__proto__`, plus any
+          // redaction-induced collision): never let two distinct original
+          // keys collapse onto the same output key.
+          let candidate = redactedKey;
+          let n = 2;
+          while (usedKeys.has(candidate)) candidate = `${redactedKey}__${n++}`;
+          usedKeys.add(candidate);
+          // Object.defineProperty bypasses Object.prototype's inherited
+          // __proto__ accessor setter, which a plain `out[k] = v`
+          // assignment would silently no-op through for a key literally
+          // named "__proto__" (review finding 1.13), dropping both key
+          // and value.
+          Object.defineProperty(out, candidate, {
+            value: walk(v, [...keyPath, k]),
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          });
+        }
+        return out;
+      } finally {
+        seen.delete(value);
+      }
     }
 
     if (typeof value !== "string") return value;
