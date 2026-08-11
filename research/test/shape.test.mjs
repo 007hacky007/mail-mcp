@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { shapeOf, diffShapes } from "../shape.mjs";
+import { redact } from "../redact.mjs";
 
 test("fingerprints primitives by type, not value", () => {
   assert.equal(shapeOf("anything"), shapeOf("else"));
@@ -105,4 +106,88 @@ test("[fix round 1] a fingerprint the parser cannot parse falls back to a raw co
   assert.match(diffs[0], /could not be parsed structurally/i);
   assert.match(diffs[0], /expected \{a:number/);
   assert.match(diffs[0], /actual\s+not-a-shape-at-all/);
+});
+
+// --- Fix round 2 (see task-3-rereview.md): two fixes ordered by the
+// coordinator after that re-review. Fix 1 (Critical, privacy) is in
+// research/record.mjs and research/verify.mjs, not this file - they now
+// fingerprint the REDACTED value instead of the raw one, because a
+// fingerprint contains key names verbatim and is committed. The invariant
+// that makes that change free - shapeOf(redact(x)) === shapeOf(x) for any
+// realistic probe output, because redaction only ever changes VALUES and
+// (when a key is itself data-shaped) key TEXT, never a value's underlying
+// JS kind or an object's key SET when every key is already a plain
+// structural identifier - is asserted here so a future redactor change that
+// broke fingerprint stability would fail loudly in this file, not be
+// discovered later as a mysterious spurious verify.mjs mismatch. Fix 2
+// (Important) hardens shape.mjs's own parser and is tested directly below.
+
+test("[fix round 2 / Fix 1] shapeOf(redact(x)) equals shapeOf(x) for a realistic nested probe-shaped fixture", () => {
+  // Every key here is a real structural field name (research/redact.mjs's
+  // STRUCTURAL_KEY_NAMES), matching how an actual probe emits data - only
+  // values are data-shaped. Deliberately includes an email address, mailbox
+  // names, a folder path, a subject-bearing "sample" leaf, a null, a Date,
+  // and a "|"-union-producing pair of differently-shaped array elements, so
+  // the invariant is demonstrated across every kind of transformation
+  // redact() performs, not just fields it leaves untouched. Fictional data
+  // only - never the human partner's real gmail.com/realdomain1.com/realdomain2.eu
+  // domains or any real name.
+  const fixture = {
+    accountName: "Fictional Acme Corp",
+    enabled: true,
+    mailboxCount: 3,
+    mailboxes: [
+      {
+        name: "Thornlands-Fictional",
+        path: "Work/Thornlands-Fictional/2026",
+        unreadCount: 2,
+        messageCount: 10,
+        children: [{ name: "Nested-Fictional" }],
+      },
+      { name: "INBOX", unreadCount: 0, messageCount: 100 },
+    ],
+    props: { subject: { sample: "Q3 budget review - fictional" }, sender: null },
+    dateReceived: new Date("2026-01-01T00:00:00Z"),
+    replyTo: "fictional.person@example.net",
+  };
+
+  const rawShape = shapeOf(fixture);
+  const redactedShape = shapeOf(redact(fixture));
+  assert.equal(redactedShape, rawShape);
+  // Sanity check that this is actually exercising redaction, not comparing
+  // two untouched copies - the redacted VALUES must differ from the raw ones
+  // even though the shape does not.
+  const redacted = redact(fixture);
+  assert.notEqual(redacted.accountName, fixture.accountName);
+  assert.notEqual(redacted.replyTo, fixture.replyTo);
+  assert.notEqual(redacted.mailboxes[0].name, fixture.mailboxes[0].name);
+});
+
+test("[fix round 2 / Fix 2] a key containing both ':' and ',' (INBOX:Sent,Old) never fabricates a bare 'Old' entry", () => {
+  // The re-review's exact minimal repro (task-3-rereview.md section 2c):
+  // parseKey used to stop at the key's own embedded ':', misreading the
+  // rest of the real key text as a second, fabricated sibling entry named
+  // "Old" - a key that does not exist in either object - producing a
+  // confident but wrong diff instead of the declared fallback.
+  const expected = shapeOf({ "INBOX:Sent,Old": 1 });
+  const actual = shapeOf({ "INBOX:Sent,Old": "archived" });
+  assert.equal(expected, "{INBOX:Sent,Old:number}");
+  assert.equal(actual, "{INBOX:Sent,Old:string}");
+
+  const diffs = diffShapes(expected, actual);
+  // Never the fabricated line the re-review found.
+  assert.ok(
+    !diffs.some((d) => d.startsWith("Old:")),
+    `must not fabricate a bare "Old" entry, got: ${diffs.join("\n")}`
+  );
+  // Acceptable outcomes per the dispatch: either a correct diff naming the
+  // real key, or the declared fallback (which embeds both raw fingerprints
+  // verbatim, so the real key is still visible in the message even though
+  // it is not parsed out as a structured path).
+  const namesRealKey = diffs.some((d) => d.includes("INBOX:Sent,Old"));
+  const isDeclaredFallback = diffs.length === 1 && /could not be parsed structurally/i.test(diffs[0]);
+  assert.ok(
+    namesRealKey || isDeclaredFallback,
+    `expected either the real key named or the declared fallback, got: ${diffs.join("\n")}`
+  );
 });

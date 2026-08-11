@@ -38,14 +38,38 @@ export function shapeOf(value) {
 //   shape  := object | array | word
 //   object := "{" [ key ":" shape ("," key ":" shape)* ] "}"
 //   array  := "[]" | "[" shape ("|" shape)* "]"
-//   word   := a run of characters containing none of , { } [ ] | :
-//             (a typeof result such as "number"/"string"/"boolean", or the
-//             literal "null")
-// Keys and words are opaque runs of text to the parser - it only needs to
-// know where the structural delimiters are, never what alphabet a probe
-// author used for a key.
+//   word   := one of a small closed vocabulary (every possible `typeof`
+//             result, plus the literal "null" - see LEAF_WORDS below), never
+//             an arbitrary run of non-delimiter characters
+// Keys are an opaque run of text up to the next ":" - the parser does not
+// need to know what alphabet a probe author used for a key. Value words are
+// NOT opaque: they are checked against LEAF_WORDS (fix round 2, see the
+// comment there), because a permissive "any text is a valid word" reading
+// is exactly what let a colon-and-comma-containing key misparse silently.
 
 class ShapeParseError extends Error {}
+
+// The complete, closed set of leaf words shapeOf can ever produce: every
+// possible `typeof` result, plus the special-cased "null". A value leaf can
+// never legitimately be anything else. Fix round 2 (task-3-rereview.md
+// section 2c): an object key containing a literal ":" followed later by a
+// "," with no intervening "{"/"[" - e.g. a real key "INBOX:Sent,Old" - used
+// to misparse silently: parseKey stopped at the key's own embedded ":",
+// leaving the rest ("Sent,Old:...") to be misread as a second, fabricated
+// top-level entry ("Old" with the real leaf as its value), and because that
+// misreading was grammatically well-formed end to end it never reached the
+// declared fallback - it produced a confident, wrong diagnosis naming a key
+// that does not exist. Rejecting anything outside this closed vocabulary
+// when parsing a VALUE position closes exactly that gap: the misread middle
+// segment ("Sent") is essentially never one of these nine words, so it can
+// no longer be silently accepted as a plausible leaf - parsing throws
+// instead, and diffShapes falls back honestly. This does not require
+// perfectly parsing every colon-containing key in general (the grammar has
+// no escaping, so that is not always possible), only that a misread never
+// passes for a real one.
+const LEAF_WORDS = new Set([
+  "undefined", "object", "boolean", "number", "bigint", "string", "symbol", "function", "null",
+]);
 
 function parseShapeTree(s) {
   let i = 0;
@@ -120,7 +144,9 @@ function parseShapeTree(s) {
     const start = i;
     while (i < s.length && !",{}[]|:".includes(s[i])) i++;
     if (i === start) fail(`unexpected character '${s[i]}'`);
-    return { kind: "leaf", word: s.slice(start, i) };
+    const word = s.slice(start, i);
+    if (!LEAF_WORDS.has(word)) fail(`"${word}" is not a recognized leaf type`);
+    return { kind: "leaf", word };
   };
 
   const tree = parseNode();

@@ -30,12 +30,22 @@ if (!result.ok) {
 // no fallback to writing unredacted data under any circumstances.
 let record;
 try {
+  const redactedArgs = redact(args);
+  const redactedData = redact(result.data);
   record = {
     probe: name,
-    args: redact(args),
+    args: redactedArgs,
     seconds: Number(result.seconds.toFixed(3)),
-    shape: shapeOf(result.data),
-    data: redact(result.data),
+    // Fingerprint the REDACTED value, never the raw one: a fingerprint
+    // contains key names verbatim and is committed to research/results/, so
+    // fingerprinting raw data would bypass redaction entirely for any probe
+    // that ever uses a data value (an email address, an account or mailbox
+    // name) as an object key. shapeOf(redactedData) is what verify.mjs must
+    // also compute against a freshly-run probe (see research/verify.mjs) -
+    // if one side fingerprints raw and the other redacted, every such probe
+    // reports a spurious mismatch the moment the two diverge.
+    shape: shapeOf(redactedData),
+    data: redactedData,
   };
 } catch (err) {
   console.error(

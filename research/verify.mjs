@@ -5,6 +5,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runProbe } from "./harness.mjs";
+import { redact } from "./redact.mjs";
 import { shapeOf, diffShapes } from "./shape.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -31,7 +32,13 @@ for (const file of files) {
       continue;
     }
 
-    const diffs = diffShapes(recorded.shape, shapeOf(result.data));
+    // Fingerprint the REDACTED value, exactly as record.mjs does (see the
+    // comment there) - both sides of this comparison must be computed the
+    // same way, or every probe reports a spurious mismatch the moment raw
+    // and redacted fingerprints diverge. redact() can throw on a field the
+    // allowlist does not recognize; that throw is caught by this file's
+    // try below, same as any other unexpected failure for this probe.
+    const diffs = diffShapes(recorded.shape, shapeOf(redact(result.data)));
     if (diffs.length > 0) {
       console.error(`FAIL ${recorded.probe}:\n  ${diffs.join("\n  ")}`);
       failures++;

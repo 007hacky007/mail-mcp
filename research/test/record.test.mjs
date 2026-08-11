@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { writeFileSync, rmSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROBE_DIR } from "../harness.mjs";
@@ -40,6 +40,57 @@ test("record.mjs fails cleanly, naming the probe and the undeclared key, and wri
     // No stack trace: the throw was caught, not left to bubble up.
     assert.doesNotMatch(proc.stderr, /at file:\/\//);
     assert.equal(existsSync(resultPath), false, "no recording - partial or otherwise - must be written");
+  } finally {
+    rmSync(fixturePath, { force: true });
+    rmSync(resultPath, { force: true });
+  }
+});
+
+// Fix round 2 (task-3-rereview.md Fix 1, Critical/privacy): record.mjs used
+// to fingerprint the RAW probe result (shape: shapeOf(result.data)) and only
+// redact separately for the `data` field. A fingerprint embeds object KEY
+// NAMES verbatim, so any probe that ever uses a real mailbox/account name or
+// email address as a data key would write it straight into the committed
+// `shape` string, walking around the redactor entirely - the exact leak
+// class Task 2 exists to close. Fixed by redacting once and fingerprinting
+// that redacted value for both `shape` and `data`. Exercised end to end via
+// a throwaway fixture probe whose JSON output uses a fictional email address
+// as an object key - never a real probe, never the human partner's real
+// gmail.com/realdomain1.com/realdomain2.eu domains.
+test("record.mjs fingerprints the REDACTED value: an email-address object key becomes its pseudonym in the recorded shape, never the raw address", () => {
+  const fixtureName = "__test-fixture-email-key";
+  const fixturePath = resolve(PROBE_DIR, `${fixtureName}.js`);
+  const resultPath = resolve(RESULTS_DIR, `${fixtureName}.json`);
+  const fictionalEmail = "fictional.tester@example.net";
+
+  writeFileSync(
+    fixturePath,
+    `function run(argv) { return JSON.stringify({ "${fictionalEmail}": 42 }); }\n`
+  );
+
+  try {
+    const proc = spawnSync(process.execPath, [RECORD_MJS, fixtureName], {
+      encoding: "utf8",
+    });
+
+    assert.equal(proc.status, 0, `expected exit 0, got ${proc.status}; stderr:\n${proc.stderr}`);
+    assert.ok(existsSync(resultPath), "recording must be written");
+
+    const written = readFileSync(resultPath, "utf8");
+    assert.ok(!written.includes(fictionalEmail), `raw address leaked into the recording: ${written}`);
+    assert.ok(!proc.stdout.includes(fictionalEmail), `raw address leaked to stdout: ${proc.stdout}`);
+
+    const record = JSON.parse(written);
+    const [redactedKey] = Object.keys(record.data);
+    assert.match(redactedKey, /^user\d+@example\.com$/, `data key was not pseudonymized: ${redactedKey}`);
+    // The shape must be built from the SAME redacted key that ends up in
+    // `data` - proving shape and data come from one shared redacted value,
+    // not from two independently-computed (and potentially divergent)
+    // redactions.
+    assert.ok(
+      record.shape.includes(redactedKey),
+      `shape does not contain the pseudonym that data uses: shape=${record.shape} key=${redactedKey}`
+    );
   } finally {
     rmSync(fixturePath, { force: true });
     rmSync(resultPath, { force: true });
