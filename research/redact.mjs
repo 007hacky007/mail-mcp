@@ -88,6 +88,10 @@ const PROBE_NAMES = new Set([
   // 13th probe file (added Task 4, fix round 1): measures the message-size
   // distribution instead of asserting it, per the review's Critical finding.
   "12-message-sizes",
+  // 14th probe file (added with the reading tools): pins the byId recipe
+  // get-message/get-thread rest on - byId property reads are milliseconds
+  // even on the 52k mailbox, where positional access does not finish.
+  "13-byid",
 ]);
 const VALUE_VALIDATORS = new Map([
   ["probe", (s) => PROBE_NAMES.has(s)],
@@ -178,6 +182,9 @@ const STRUCTURAL_KEY_NAMES = new Set([
   // message-size distribution the section-4 Critical finding required
   "fetchok", "fetcherror", "maxsizebytes", "mediansizebytes",
   "over1mb", "over4mb", "over16mb", "over64mb",
+  // research/probes/13-byid.js (reading tools): byId cost and miss behavior
+  "bulkidseconds", "byidsubjectseconds", "byidheadersbulkseconds",
+  "byidmissraised", "byidmissseconds",
 ]);
 
 const isNumericSegment = (s) => /^\d+$/.test(s);

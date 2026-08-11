@@ -24,7 +24,16 @@ test("tool names are unique", () => {
 
 test("expected tools are registered", () => {
   const names = new Set(tools.map((t) => t.name));
-  for (const expected of ["doctor", "list-accounts", "list-mailboxes", "get-unread-count"]) {
+  for (const expected of [
+    "doctor",
+    "list-accounts",
+    "list-mailboxes",
+    "get-unread-count",
+    "list-messages",
+    "search-messages",
+    "get-message",
+    "get-thread",
+  ]) {
     assert.ok(names.has(expected), `${expected} missing from registry`);
   }
 });

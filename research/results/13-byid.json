@@ -1,0 +1,22 @@
+{
+  "probe": "13-byid",
+  "args": [
+    "largest-enabled",
+    "INBOX"
+  ],
+  "seconds": 1.701,
+  "shape": "{\"bulkIdSeconds\":number,\"byIdHeadersBulkSeconds\":number,\"byIdMissRaised\":boolean,\"byIdMissSeconds\":number,\"byIdSubjectSeconds\":number,\"fetchError\":string,\"fetchOk\":boolean,\"messageCount\":number}",
+  "successProfile": {
+    "fetchOk": true
+  },
+  "data": {
+    "fetchOk": true,
+    "fetchError": "<str len=0 chars=ascii>",
+    "messageCount": 52148,
+    "bulkIdSeconds": 0.5358690023422241,
+    "byIdSubjectSeconds": 0.001067042350769043,
+    "byIdHeadersBulkSeconds": 0.007462978363037109,
+    "byIdMissRaised": true,
+    "byIdMissSeconds": 0.008604049682617188
+  }
+}

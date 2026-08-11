@@ -47,6 +47,24 @@ export function throwDomain(error) {
           `${candidates.join(", ") || "(none)"}.`,
         error
       );
+    case "mailbox-too-large":
+      throw new DomainError(
+        `Mailbox ${JSON.stringify(requested ?? "")} in account ${JSON.stringify(account ?? "")} ` +
+          `holds ${error.messageCount} messages, over the size guard of ${error.maxMessages}. ` +
+          `Bulk operations degrade worse than linearly with mailbox size, so this is refused ` +
+          `by default. Pass a larger maxMessages to scan it anyway (expect it to be slow), ` +
+          `or narrow the scope.`,
+        error
+      );
+    case "message-not-found":
+      throw new DomainError(
+        `No message with id ${error.requested} exists in mailbox ` +
+          `${JSON.stringify(error.mailbox ?? "")} of account ${JSON.stringify(account ?? "")}. ` +
+          `Message ids are per-mailbox and do not survive a move: an id obtained earlier may ` +
+          `now belong to a different mailbox. Re-run list-messages or search-messages to get ` +
+          `a fresh id with its current mailbox path.`,
+        error
+      );
     case "mailbox-ambiguous":
       throw new DomainError(
         `The path ${JSON.stringify(requested ?? "")} matches more than one mailbox in ` +

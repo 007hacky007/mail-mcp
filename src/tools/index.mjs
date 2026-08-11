@@ -9,6 +9,10 @@ import { createDoctorTool } from "./doctor.mjs";
 import { createListAccountsTool } from "./list-accounts.mjs";
 import { createListMailboxesTool } from "./list-mailboxes.mjs";
 import { createGetUnreadCountTool } from "./get-unread-count.mjs";
+import { createListMessagesTool } from "./list-messages.mjs";
+import { createSearchMessagesTool } from "./search-messages.mjs";
+import { createGetMessageTool } from "./get-message.mjs";
+import { createGetThreadTool } from "./get-thread.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(resolve(HERE, "..", "..", "package.json"), "utf8"));
@@ -21,4 +25,8 @@ export const tools = [
   createListAccountsTool(),
   createListMailboxesTool(),
   createGetUnreadCountTool(),
+  createListMessagesTool(),
+  createSearchMessagesTool(),
+  createGetMessageTool(),
+  createGetThreadTool(),
 ];
