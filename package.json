@@ -1,0 +1,14 @@
+{
+  "name": "mail-mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Apple Mail MCP server. Drafts-only, zero runtime dependencies.",
+  "engines": { "node": ">=20.0.0" },
+  "os": ["darwin"],
+  "scripts": {
+    "test": "node --test research/test/",
+    "probe": "node research/record.mjs",
+    "verify": "node research/verify.mjs"
+  }
+}
