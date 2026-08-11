@@ -22,6 +22,9 @@ test("tool names are unique", () => {
   assert.equal(new Set(names).size, names.length);
 });
 
-test("doctor is registered", () => {
-  assert.ok(tools.some((t) => t.name === "doctor"));
+test("expected tools are registered", () => {
+  const names = new Set(tools.map((t) => t.name));
+  for (const expected of ["doctor", "list-accounts", "list-mailboxes", "get-unread-count"]) {
+    assert.ok(names.has(expected), `${expected} missing from registry`);
+  }
 });
