@@ -1,0 +1,459 @@
+{
+  "probe": "03-mailboxes",
+  "args": [],
+  "seconds": 29.941,
+  "shape": "{\"accounts\":[{\"mailboxes\":[],\"name\":string}|{\"mailboxes\":[{\"depth\":number,\"messageCount\":number,\"name\":string,\"path\":string,\"unreadCount\":number}],\"name\":string}]}",
+  "data": {
+    "accounts": [
+      {
+        "name": "Account A",
+        "mailboxes": [
+          {
+            "name": "Folder 1",
+            "path": "Folder 1",
+            "depth": 0,
+            "messageCount": 129,
+            "unreadCount": 70
+          },
+          {
+            "name": "Folder 2",
+            "path": "Folder 2",
+            "depth": 0,
+            "messageCount": 673,
+            "unreadCount": 664
+          },
+          {
+            "name": "Folder 3",
+            "path": "Folder 3",
+            "depth": 0,
+            "messageCount": 369,
+            "unreadCount": 273
+          },
+          {
+            "name": "Junk",
+            "path": "Junk",
+            "depth": 0,
+            "messageCount": 131,
+            "unreadCount": 127
+          },
+          {
+            "name": "Folder 4",
+            "path": "Folder 4",
+            "depth": 0,
+            "messageCount": 18,
+            "unreadCount": 18
+          },
+          {
+            "name": "Junk",
+            "path": "Junk",
+            "depth": 0,
+            "messageCount": 0,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 5",
+            "path": "Folder 5",
+            "depth": 0,
+            "messageCount": 38,
+            "unreadCount": 0
+          },
+          {
+            "name": "Junk",
+            "path": "Folder 5/Junk",
+            "depth": 1,
+            "messageCount": 0,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 6",
+            "path": "Folder 6",
+            "depth": 0,
+            "messageCount": 2874,
+            "unreadCount": 2726
+          },
+          {
+            "name": "Folder 7",
+            "path": "Folder 7",
+            "depth": 0,
+            "messageCount": 6,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 8",
+            "path": "Folder 8",
+            "depth": 0,
+            "messageCount": 326,
+            "unreadCount": 323
+          },
+          {
+            "name": "Folder 9",
+            "path": "Folder 9",
+            "depth": 0,
+            "messageCount": 0,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 10",
+            "path": "Folder 10",
+            "depth": 0,
+            "messageCount": 6,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 11",
+            "path": "Folder 11",
+            "depth": 0,
+            "messageCount": 717,
+            "unreadCount": 229
+          },
+          {
+            "name": "Folder 12",
+            "path": "Folder 12",
+            "depth": 0,
+            "messageCount": 1,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 13",
+            "path": "Folder 13",
+            "depth": 0,
+            "messageCount": 1060,
+            "unreadCount": 89
+          },
+          {
+            "name": "Folder 14",
+            "path": "Folder 14",
+            "depth": 0,
+            "messageCount": 0,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 15",
+            "path": "Folder 15",
+            "depth": 0,
+            "messageCount": 0,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 16",
+            "path": "Folder 16",
+            "depth": 0,
+            "messageCount": 0,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 17",
+            "path": "Folder 17",
+            "depth": 0,
+            "messageCount": 2212,
+            "unreadCount": 1558
+          },
+          {
+            "name": "Folder 18",
+            "path": "Folder 18",
+            "depth": 0,
+            "messageCount": 20304,
+            "unreadCount": 10795
+          },
+          {
+            "name": "Folder 19",
+            "path": "Folder 19",
+            "depth": 0,
+            "messageCount": 7226,
+            "unreadCount": 7204
+          },
+          {
+            "name": "Trash",
+            "path": "Trash",
+            "depth": 0,
+            "messageCount": 23,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 20",
+            "path": "Folder 20",
+            "depth": 0,
+            "messageCount": 38,
+            "unreadCount": 6
+          },
+          {
+            "name": "Folder 21",
+            "path": "Folder 21",
+            "depth": 0,
+            "messageCount": 2720,
+            "unreadCount": 1898
+          },
+          {
+            "name": "Archive",
+            "path": "Archive",
+            "depth": 0,
+            "messageCount": 317,
+            "unreadCount": 166
+          },
+          {
+            "name": "Folder 22",
+            "path": "Folder 22",
+            "depth": 0,
+            "messageCount": 0,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 23",
+            "path": "Folder 23",
+            "depth": 0,
+            "messageCount": 0,
+            "unreadCount": 0
+          },
+          {
+            "name": "INBOX",
+            "path": "INBOX",
+            "depth": 0,
+            "messageCount": 17486,
+            "unreadCount": 2
+          },
+          {
+            "name": "Drafts",
+            "path": "Drafts",
+            "depth": 0,
+            "messageCount": 3,
+            "unreadCount": 3
+          },
+          {
+            "name": "Sent Messages",
+            "path": "Sent Messages",
+            "depth": 0,
+            "messageCount": 2101,
+            "unreadCount": 0
+          },
+          {
+            "name": "Deleted Messages",
+            "path": "Deleted Messages",
+            "depth": 0,
+            "messageCount": 1950,
+            "unreadCount": 159
+          },
+          {
+            "name": "Spam",
+            "path": "Spam",
+            "depth": 0,
+            "messageCount": 1422,
+            "unreadCount": 1375
+          }
+        ]
+      },
+      {
+        "name": "Account B",
+        "mailboxes": [
+          {
+            "name": "Folder 24",
+            "path": "Folder 24",
+            "depth": 0,
+            "messageCount": 24943,
+            "unreadCount": 14
+          },
+          {
+            "name": "Folder 25",
+            "path": "Folder 25",
+            "depth": 0,
+            "messageCount": 0,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 26",
+            "path": "Folder 26",
+            "depth": 0,
+            "messageCount": 61641,
+            "unreadCount": 3565
+          },
+          {
+            "name": "Folder 27",
+            "path": "Folder 27",
+            "depth": 0,
+            "messageCount": 1,
+            "unreadCount": 1
+          },
+          {
+            "name": "Folder 28",
+            "path": "Folder 28",
+            "depth": 0,
+            "messageCount": 7792,
+            "unreadCount": 1
+          },
+          {
+            "name": "Folder 5",
+            "path": "Folder 5",
+            "depth": 0,
+            "messageCount": 1,
+            "unreadCount": 0
+          },
+          {
+            "name": "Spam",
+            "path": "Spam",
+            "depth": 0,
+            "messageCount": 5,
+            "unreadCount": 1
+          },
+          {
+            "name": "Folder 29",
+            "path": "Folder 29",
+            "depth": 0,
+            "messageCount": 15284,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 30",
+            "path": "Folder 30",
+            "depth": 0,
+            "messageCount": 1590,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 31",
+            "path": "Folder 31",
+            "depth": 0,
+            "messageCount": 3178,
+            "unreadCount": 1
+          },
+          {
+            "name": "Folder 32",
+            "path": "Folder 32",
+            "depth": 0,
+            "messageCount": 73,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 33",
+            "path": "Folder 33",
+            "depth": 0,
+            "messageCount": 7683,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 34",
+            "path": "Folder 34",
+            "depth": 0,
+            "messageCount": 882,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 35",
+            "path": "Folder 35",
+            "depth": 0,
+            "messageCount": 0,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 36",
+            "path": "Folder 36",
+            "depth": 0,
+            "messageCount": 0,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 35",
+            "path": "Folder 36/Folder 35",
+            "depth": 1,
+            "messageCount": 0,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 37",
+            "path": "Folder 37",
+            "depth": 0,
+            "messageCount": 2162,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 38",
+            "path": "Folder 38",
+            "depth": 0,
+            "messageCount": 240,
+            "unreadCount": 7
+          },
+          {
+            "name": "Folder 39",
+            "path": "Folder 39",
+            "depth": 0,
+            "messageCount": 1049,
+            "unreadCount": 28
+          },
+          {
+            "name": "Folder 40",
+            "path": "Folder 40",
+            "depth": 0,
+            "messageCount": 384,
+            "unreadCount": 1
+          },
+          {
+            "name": "Folder 41",
+            "path": "Folder 41",
+            "depth": 0,
+            "messageCount": 0,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 42",
+            "path": "Folder 42",
+            "depth": 0,
+            "messageCount": 0,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 43",
+            "path": "Folder 43",
+            "depth": 0,
+            "messageCount": 0,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 44",
+            "path": "Folder 44",
+            "depth": 0,
+            "messageCount": 39,
+            "unreadCount": 8
+          },
+          {
+            "name": "Folder 45",
+            "path": "Folder 45",
+            "depth": 0,
+            "messageCount": 28,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 46",
+            "path": "Folder 46",
+            "depth": 0,
+            "messageCount": 333,
+            "unreadCount": 0
+          },
+          {
+            "name": "Folder 23",
+            "path": "Folder 23",
+            "depth": 0,
+            "messageCount": 0,
+            "unreadCount": 0
+          },
+          {
+            "name": "INBOX",
+            "path": "INBOX",
+            "depth": 0,
+            "messageCount": 52143,
+            "unreadCount": 0
+          }
+        ]
+      },
+      {
+        "name": "Account C",
+        "mailboxes": []
+      },
+      {
+        "name": "Account D",
+        "mailboxes": []
+      },
+      {
+        "name": "Account E",
+        "mailboxes": []
+      }
+    ]
+  }
+}

@@ -1,0 +1,173 @@
+{
+  "probe": "02-accounts",
+  "args": [],
+  "seconds": 0.727,
+  "shape": "{\"accountCount\":number,\"accounts\":[{\"accountType\":{\"ok\":boolean,\"value\":string},\"emailAddresses\":{\"ok\":boolean,\"value\":[string]},\"enabled\":{\"ok\":boolean,\"value\":boolean},\"mailboxCount\":{\"ok\":boolean,\"value\":number},\"name\":{\"ok\":boolean,\"value\":string},\"serverName\":{\"ok\":boolean,\"value\":string},\"userName\":{\"ok\":boolean,\"value\":string}}]}",
+  "data": {
+    "accountCount": 5,
+    "accounts": [
+      {
+        "name": {
+          "ok": true,
+          "value": "<str len=5 chars=ascii>"
+        },
+        "enabled": {
+          "ok": true,
+          "value": true
+        },
+        "accountType": {
+          "ok": true,
+          "value": "<str len=4 chars=ascii>"
+        },
+        "emailAddresses": {
+          "ok": true,
+          "value": [
+            "user1@example.com",
+            "user2@example.com",
+            "user3@example.com"
+          ]
+        },
+        "userName": {
+          "ok": true,
+          "value": "user1@example.com"
+        },
+        "serverName": {
+          "ok": true,
+          "value": "<str len=19 chars=ascii>"
+        },
+        "mailboxCount": {
+          "ok": true,
+          "value": 32
+        }
+      },
+      {
+        "name": {
+          "ok": true,
+          "value": "user4@example.com"
+        },
+        "enabled": {
+          "ok": true,
+          "value": true
+        },
+        "accountType": {
+          "ok": true,
+          "value": "<str len=4 chars=ascii>"
+        },
+        "emailAddresses": {
+          "ok": true,
+          "value": [
+            "user5@example.com"
+          ]
+        },
+        "userName": {
+          "ok": true,
+          "value": "user4@example.com"
+        },
+        "serverName": {
+          "ok": true,
+          "value": "<str len=14 chars=ascii>"
+        },
+        "mailboxCount": {
+          "ok": true,
+          "value": 27
+        }
+      },
+      {
+        "name": {
+          "ok": true,
+          "value": "<str len=7 chars=ascii>"
+        },
+        "enabled": {
+          "ok": true,
+          "value": false
+        },
+        "accountType": {
+          "ok": true,
+          "value": "<str len=4 chars=ascii>"
+        },
+        "emailAddresses": {
+          "ok": true,
+          "value": [
+            "user6@example.com"
+          ]
+        },
+        "userName": {
+          "ok": true,
+          "value": "user6@example.com"
+        },
+        "serverName": {
+          "ok": true,
+          "value": "<str len=19 chars=ascii>"
+        },
+        "mailboxCount": {
+          "ok": true,
+          "value": 0
+        }
+      },
+      {
+        "name": {
+          "ok": true,
+          "value": "user1@example.com"
+        },
+        "enabled": {
+          "ok": true,
+          "value": false
+        },
+        "accountType": {
+          "ok": true,
+          "value": "<str len=4 chars=ascii>"
+        },
+        "emailAddresses": {
+          "ok": true,
+          "value": [
+            "user1@example.com"
+          ]
+        },
+        "userName": {
+          "ok": true,
+          "value": "user1@example.com"
+        },
+        "serverName": {
+          "ok": true,
+          "value": "<str len=20 chars=ascii>"
+        },
+        "mailboxCount": {
+          "ok": true,
+          "value": 0
+        }
+      },
+      {
+        "name": {
+          "ok": true,
+          "value": "user6@example.com"
+        },
+        "enabled": {
+          "ok": true,
+          "value": false
+        },
+        "accountType": {
+          "ok": true,
+          "value": "<str len=4 chars=ascii>"
+        },
+        "emailAddresses": {
+          "ok": true,
+          "value": [
+            "user6@example.com"
+          ]
+        },
+        "userName": {
+          "ok": true,
+          "value": "user6@example.com"
+        },
+        "serverName": {
+          "ok": true,
+          "value": "<str len=20 chars=ascii>"
+        },
+        "mailboxCount": {
+          "ok": true,
+          "value": 0
+        }
+      }
+    ]
+  }
+}

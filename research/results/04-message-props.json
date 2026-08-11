@@ -1,0 +1,132 @@
+{
+  "probe": "04-message-props",
+  "args": [
+    "<str len=5 chars=ascii>",
+    "<str len=5 chars=ascii>"
+  ],
+  "seconds": 31.893,
+  "shape": "{\"props\":{\"attachmentCount\":{\"error\":string,\"ok\":boolean,\"sample\":string,\"seconds\":number,\"type\":string},\"ccRecipients\":{\"error\":string,\"ok\":boolean,\"sample\":string,\"seconds\":number,\"type\":string},\"contentLength\":{\"error\":string,\"ok\":boolean,\"sample\":string,\"seconds\":number,\"type\":string},\"dateReceived\":{\"error\":string,\"ok\":boolean,\"sample\":string,\"seconds\":number,\"type\":string},\"dateSent\":{\"error\":string,\"ok\":boolean,\"sample\":string,\"seconds\":number,\"type\":string},\"flagIndex\":{\"error\":string,\"ok\":boolean,\"sample\":string,\"seconds\":number,\"type\":string},\"flaggedStatus\":{\"error\":string,\"ok\":boolean,\"sample\":string,\"seconds\":number,\"type\":string},\"id\":{\"error\":string,\"ok\":boolean,\"sample\":string,\"seconds\":number,\"type\":string},\"mailboxName\":{\"error\":string,\"ok\":boolean,\"sample\":string,\"seconds\":number,\"type\":string},\"messageId\":{\"error\":string,\"ok\":boolean,\"sample\":string,\"seconds\":number,\"type\":string},\"messageSize\":{\"error\":string,\"ok\":boolean,\"sample\":string,\"seconds\":number,\"type\":string},\"readStatus\":{\"error\":string,\"ok\":boolean,\"sample\":string,\"seconds\":number,\"type\":string},\"replyTo\":{\"error\":string,\"ok\":boolean,\"sample\":string,\"seconds\":number,\"type\":string},\"sender\":{\"error\":string,\"ok\":boolean,\"sample\":string,\"seconds\":number,\"type\":string},\"sourceLength\":{\"error\":string,\"ok\":boolean,\"sample\":string,\"seconds\":number,\"type\":string},\"subject\":{\"error\":string,\"ok\":boolean,\"sample\":string,\"seconds\":number,\"type\":string},\"toRecipients\":{\"error\":string,\"ok\":boolean,\"sample\":string,\"seconds\":number,\"type\":string}}}",
+  "data": {
+    "props": {
+      "id": {
+        "ok": true,
+        "seconds": 1.6966689825057983,
+        "type": "number",
+        "sample": "<str len=6 chars=ascii>",
+        "error": "<str len=0 chars=ascii>"
+      },
+      "messageId": {
+        "ok": true,
+        "seconds": 1.952394962310791,
+        "type": "string",
+        "sample": "user1@example.com",
+        "error": "<str len=0 chars=ascii>"
+      },
+      "subject": {
+        "ok": true,
+        "seconds": 2.118276000022888,
+        "type": "string",
+        "sample": "<str len=23 chars=unicode>",
+        "error": "<str len=0 chars=ascii>"
+      },
+      "sender": {
+        "ok": true,
+        "seconds": 1.976364016532898,
+        "type": "string",
+        "sample": "\"Person 1\" <user2@example.com>",
+        "error": "<str len=0 chars=ascii>"
+      },
+      "dateReceived": {
+        "ok": true,
+        "seconds": 2.2055599689483643,
+        "type": "string",
+        "sample": "<str len=60 chars=ascii>",
+        "error": "<str len=0 chars=ascii>"
+      },
+      "dateSent": {
+        "ok": true,
+        "seconds": 2.3663350343704224,
+        "type": "string",
+        "sample": "<str len=60 chars=ascii>",
+        "error": "<str len=0 chars=ascii>"
+      },
+      "readStatus": {
+        "ok": true,
+        "seconds": 1.9878510236740112,
+        "type": "boolean",
+        "sample": "<str len=4 chars=ascii>",
+        "error": "<str len=0 chars=ascii>"
+      },
+      "flaggedStatus": {
+        "ok": true,
+        "seconds": 2.1989619731903076,
+        "type": "boolean",
+        "sample": "<str len=5 chars=ascii>",
+        "error": "<str len=0 chars=ascii>"
+      },
+      "flagIndex": {
+        "ok": true,
+        "seconds": 2.066287040710449,
+        "type": "number",
+        "sample": "<str len=2 chars=ascii>",
+        "error": "<str len=0 chars=ascii>"
+      },
+      "messageSize": {
+        "ok": true,
+        "seconds": 2.0254729986190796,
+        "type": "number",
+        "sample": "<str len=5 chars=ascii>",
+        "error": "<str len=0 chars=ascii>"
+      },
+      "mailboxName": {
+        "ok": true,
+        "seconds": 2.1727789640426636,
+        "type": "string",
+        "sample": "<str len=5 chars=ascii>",
+        "error": "<str len=0 chars=ascii>"
+      },
+      "replyTo": {
+        "ok": true,
+        "seconds": 1.9489099979400635,
+        "type": "string",
+        "sample": "\"Person 1\" <user2@example.com>",
+        "error": "<str len=0 chars=ascii>"
+      },
+      "toRecipients": {
+        "ok": true,
+        "seconds": 2.1199710369110107,
+        "type": "number",
+        "sample": "<str len=1 chars=ascii>",
+        "error": "<str len=0 chars=ascii>"
+      },
+      "ccRecipients": {
+        "ok": true,
+        "seconds": 1.9188430309295654,
+        "type": "number",
+        "sample": "<str len=1 chars=ascii>",
+        "error": "<str len=0 chars=ascii>"
+      },
+      "contentLength": {
+        "ok": true,
+        "seconds": 1.86074697971344,
+        "type": "number",
+        "sample": "<str len=4 chars=ascii>",
+        "error": "<str len=0 chars=ascii>"
+      },
+      "sourceLength": {
+        "ok": true,
+        "seconds": 0.7348719835281372,
+        "type": "number",
+        "sample": "<str len=5 chars=ascii>",
+        "error": "<str len=0 chars=ascii>"
+      },
+      "attachmentCount": {
+        "ok": true,
+        "seconds": 0.479854941368103,
+        "type": "number",
+        "sample": "<str len=1 chars=ascii>",
+        "error": "<str len=0 chars=ascii>"
+      }
+    }
+  }
+}
