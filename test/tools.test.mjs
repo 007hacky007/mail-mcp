@@ -35,7 +35,14 @@ test("expected tools are registered", () => {
     "get-thread",
     "list-attachments",
     "save-attachment",
+    "create-draft",
+    "reply-draft",
+    "forward-draft",
   ]) {
     assert.ok(names.has(expected), `${expected} missing from registry`);
   }
+});
+
+test("the tool surface is exactly the thirteen designed tools", () => {
+  assert.equal(tools.length, 13);
 });

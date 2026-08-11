@@ -132,13 +132,47 @@ measurements and is wrong in three places. Fix the spec or trust this file.
    resolved by full path, never assumed; its `All Mail` would simply appear
    in the tree like any other mailbox.
 
-## Open questions for the implementation
+## Draft recipes: verified 2026-08-11, with a new trap
 
-- All draft, reply and forward recipes are unverified. `reply ... without opening
-  window` is required rather than optional: with a compose window, `set content`
-  silently no-ops because the window is not ready, producing an empty body, and
-  it reproduces specifically from background processes, which is how an MCP
-  server always runs.
+All three draft recipes were verified against real Mail (16.0, macOS 26.6.1)
+while building the server's draft tools, and the verification found a trap
+that upstream's issue #7 does not cover:
+
+- **create-draft works as specified.** `Mail.OutgoingMessage({visible: false})`
+  pushed onto `outgoingMessages`, recipients as child objects, attachments via
+  `msg.attachments.push(Mail.Attachment({fileName: Path(p)}))` (the direct
+  element worked; no content-element fallback needed), then `Mail.save(msg)`
+  files it into Drafts. Subject, recipients, body and attachment all
+  round-tripped.
+- **`reply`/`forward ... without opening window` is necessary but NOT
+  sufficient.** The new finding: **reading `content()` before setting it
+  poisons the draft.** A fresh reply's `content()` reads back empty, and after
+  that read, `out.content = body` silently no-ops - the draft saves as the
+  bare quote skeleton without the body, with no error anywhere. Setting
+  content immediately, without any prior read, works. Measured directly with
+  three variants on the same seed message; only set-without-prior-read
+  produced a saved draft containing the body.
+- **Mail appends the quoted original below the set content at save time**, so
+  a reply body must NOT be concatenated with the existing content (which reads
+  empty anyway, see above). The saved draft = body + quoted original.
+- **Post-save reads through the outgoing message object are unreliable**:
+  `content()` reads back empty after `save` even when the saved draft is
+  fine. Read every field back after the set but BEFORE save; only `id` is
+  read after.
+- **Read-back length is body length plus a trailing newline** Mail appends.
+- **Where drafts land:** reply/forward drafts of a message appear in that
+  account's `Drafts` mailbox. A create-draft under the default account (the
+  Gmail-backed one here) was NOT visible under any of that account's mailbox
+  paths - the account exposes no Drafts mailbox at all - but exists in the
+  application-level `Mail.draftsMailbox` ("All Drafts", a property, not an
+  account mailbox). A tool that cannot find a just-created draft by path
+  should not conclude it was not created.
+
+The server's reply/forward tools also read the content back after setting it
+and refuse to report success when it is empty, so if a future Mail version
+regresses this recipe, the failure is loud instead of a silently empty draft.
+
+## Open questions for the implementation
 - The in-script deadline has no confirmed JXA equivalent of AppleScript's
   `with timeout of N seconds`. Only the outer process timeout is proven.
 - Attachment enumeration should parse the MIME `source` rather than trust Mail's

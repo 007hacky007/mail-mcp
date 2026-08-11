@@ -15,6 +15,9 @@ import { createGetMessageTool } from "./get-message.mjs";
 import { createGetThreadTool } from "./get-thread.mjs";
 import { createListAttachmentsTool } from "./list-attachments.mjs";
 import { createSaveAttachmentTool } from "./save-attachment.mjs";
+import { createCreateDraftTool } from "./create-draft.mjs";
+import { createReplyDraftTool } from "./reply-draft.mjs";
+import { createForwardDraftTool } from "./forward-draft.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(resolve(HERE, "..", "..", "package.json"), "utf8"));
@@ -33,4 +36,7 @@ export const tools = [
   createGetThreadTool(),
   createListAttachmentsTool(),
   createSaveAttachmentTool(),
+  createCreateDraftTool(),
+  createReplyDraftTool(),
+  createForwardDraftTool(),
 ];
