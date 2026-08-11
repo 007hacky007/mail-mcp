@@ -42,15 +42,30 @@ recorded in `docs/apple-mail/` and re-checkable with `node research/verify.mjs`.
 
 ## Install and register
 
-No build step and no dependencies to install. Clone the repository and
-register the entry point with your MCP host. For Claude Code:
+No build step and no dependencies to install:
 
 ```bash
-claude mcp add mail-mcp -- node /absolute/path/to/mail-mcp/src/index.mjs
+git clone https://github.com/007hacky007/mail-mcp.git
+cd mail-mcp
 ```
 
-For any other host, configure a stdio server running
+Register with Claude Code (available in every session):
+
+```bash
+claude mcp add --scope user mail-mcp -- node "$(pwd)/src/index.mjs"
+```
+
+Or for the current project only:
+
+```bash
+claude mcp add mail-mcp -- node "$(pwd)/src/index.mjs"
+```
+
+For any other MCP host, configure a stdio server running
 `node /absolute/path/to/mail-mcp/src/index.mjs`.
+
+Verify with the host's tooling (`claude mcp list` should show
+`mail-mcp ... Connected`), then call the `doctor` tool.
 
 ### Automation permission
 
