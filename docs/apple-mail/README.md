@@ -132,11 +132,12 @@ measurements and is wrong in three places. Fix the spec or trust this file.
    resolved by full path, never assumed; its `All Mail` would simply appear
    in the tree like any other mailbox.
 
-## Draft recipes: verified 2026-08-11, with a new trap
+## Draft recipes: verified 2026-08-11, with a new trap; corrected 2026-09-04
 
 All three draft recipes were verified against real Mail (16.0, macOS 26.6.1)
 while building the server's draft tools, and the verification found a trap
-that upstream's issue #7 does not cover:
+that upstream's issue #7 does not cover. One conclusion drawn on 2026-08-11
+was wrong and is corrected below (the quoting bullet):
 
 - **create-draft works as specified.** `Mail.OutgoingMessage({visible: false})`
   pushed onto `outgoingMessages`, recipients as child objects, attachments via
@@ -152,9 +153,75 @@ that upstream's issue #7 does not cover:
   content immediately, without any prior read, works. Measured directly with
   three variants on the same seed message; only set-without-prior-read
   produced a saved draft containing the body.
-- **Mail appends the quoted original below the set content at save time**, so
-  a reply body must NOT be concatenated with the existing content (which reads
-  empty anyway, see above). The saved draft = body + quoted original.
+- **CORRECTED 2026-09-04: setting `content` discards Mail's quote.** This
+  file previously claimed Mail appends the quoted original below the set
+  content at save time. That was inferred from the poisoned case above, where
+  the quote skeleton survived without the body, and it does not hold for the
+  working path. Measured against Mail 16.0 (3864.700.51.1.1) with the
+  server's exact recipe (`reply` without window, set content immediately,
+  save), then reading the saved draft back out of `Mail.draftsMailbox`: the
+  draft holds the body and the signature, carries `In-Reply-To` and
+  `References`, and has no quoted original at all. The control (same reply,
+  content never set, save) does hold Mail's `On <date>, <sender> wrote:`
+  block, so the quote exists only while content is untouched. `forward`
+  behaves the same: with a note set, the `Begin forwarded message:` block and
+  the message vanish; without one, Mail builds the forward correctly.
+  Inserting instead of replacing was tried and fails: `make new paragraph` at
+  `content.paragraphs.beginning` ("Invalid key form"), at `content.beginning`
+  ("Can't convert types"), before `paragraphs[0]` ("Invalid index"); and
+  `paragraphs.unshift` returns without error but no text lands and the quote
+  is still dropped, both before a save and after a first save (post-save
+  `content()` is empty and `paragraphs()` is 0). The dictionary exposes no
+  per-message quoting control; `reply` takes only `opening window` and
+  `reply to all`. Consequence: the server builds the quote itself in Node
+  (`src/mail/quote.mjs`) from the original's `content`, `sender` and `date
+  sent` (fetched through the get-message script) and passes body + quote as
+  one string; forward-with-note reproduces the forwarded block the same way.
+  Mail still appends the signature after the set content; how the server
+  gets it above the quote anyway is the two-pass bullet below.
+- **`html content` works, despite the dictionary. Measured 2026-09-04.** The
+  outgoing message's `html content` property (code `htda`) is marked
+  `hidden="yes"`, `access="w"`, and described as "Does nothing at all
+  (deprecated)". On Mail 16.0 (3864.700.51.1.1) it inserts the given string
+  as raw HTML into the compose document: `<blockquote type="cite">` arrived
+  intact and nested, `&lt;` decoded to `<`, UTF-8 text (`čšž`) survived, and
+  the saved draft's text/html part contains the markup verbatim inside Mail's
+  URL-share wrapper (`Apple-Mail-URLShareWrapperClass`, a borderless outer
+  blockquote). After the set, `content()` reads back the plain-text rendering
+  of that HTML (so the empty-body guard still works), `content.paragraphs()`
+  counts its lines, and reading them does not disturb the subsequent save.
+  Setting `content` with markup in it, by contrast, escapes everything
+  (`&lt;b&gt;` in the saved HTML). The same property works on a `forward`
+  outgoing message. This is what lets the server's quote render with Mail's
+  own vertical quote bar instead of literal `>` characters: the respond-draft
+  script applies the Node-built HTML via `html content`. Being hidden and
+  nominally deprecated, it may vanish in a future Mail; the script reads
+  `content()` back and refuses to save when it comes back empty, so that
+  regression would be loud.
+- **Signature placement: the two-pass harvest. Measured 2026-09-04.** After
+  any content set, Mail appends the account signature at the very end, below
+  the quote; re-assigning `message signature` afterwards changes nothing.
+  `message signature` set to missing value suppresses it entirely. The
+  bridge exposes a signature's `content` only as plain text (its attribute
+  runs throw), the `.mailsignature` files under `~/Library/Mail` are
+  TCC-protected ("Operation not permitted" without Full Disk Access), and
+  `html content` replaces the document even after a prior `content()` read or
+  a prior save, so Mail's own template can never be kept alongside a body.
+  What works: save once with Mail's signature appended, locate that draft in
+  `Mail.draftsMailbox` (exact subject plus an HTML comment marker in the
+  decoded text/html part; found in 90-170 ms on this machine), cut the
+  balanced `<div id="AppleMailSignature">` block out of its source, set
+  `message signature` to missing value, set `html content` to body +
+  signature + quote, save again. The second save replaces the draft (one
+  entry in Drafts, a new per-mailbox message id) rather than adding one. Two
+  traps: Mail deletes every element whose id is `AppleMailSignature` when the
+  signature is missing value, and a real signature nests several such
+  elements, so all of those ids must be stripped from the re-embedded block
+  (stripping only the outermost kept just the trailing fragment). HTML
+  comments and empty `<div id=...>` elements both survive Mail's
+  serialization, which is what makes the marker reliable. A signature
+  referencing `cid:` inline images cannot be moved this way (the image parts
+  belong to the first-pass draft) and is left where Mail put it.
 - **Post-save reads through the outgoing message object are unreliable**:
   `content()` reads back empty after `save` even when the saved draft is
   fine. Read every field back after the set but BEFORE save; only `id` is

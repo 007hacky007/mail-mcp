@@ -73,6 +73,15 @@ export function throwDomain(error) {
           `refused rather than resolved by guessing.`,
         error
       );
+    case "draft-body-not-applied":
+      throw new DomainError(
+        `Mail did not apply the draft body: after setting it through the outgoing message's ` +
+          `'html content' property, the content read back empty, so the draft was NOT saved ` +
+          `(nothing bodiless was left in Drafts). This property is hidden and nominally ` +
+          `deprecated in Mail's scripting dictionary, so a Mail update may have removed it. ` +
+          `Please report the Mail version; until then, drafts cannot be created this way.`,
+        error
+      );
     default:
       throw new DomainError(`Mail refused the request (${code}).`, error);
   }

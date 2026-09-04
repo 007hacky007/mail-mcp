@@ -98,8 +98,8 @@ Node is running.
 | `list-attachments` | Attachment names, types, sizes, parsed from the MIME source. Metadata only. |
 | `save-attachment` | Writes one attachment under the allowlisted root. Never overwrites. |
 | `create-draft` | New draft with recipients, subject, body, optional attachments. Saved to Drafts, never sent. |
-| `reply-draft` | Reply (or reply-all) draft with your body above the quoted original. Never sent. |
-| `forward-draft` | Forward draft to given recipients with an optional note. Never sent. |
+| `reply-draft` | Reply (or reply-all) draft with your body above the quoted original, in Mail's own quote style. `quoteOriginal=false` for a clean reply. Never sent. |
+| `forward-draft` | Forward draft to given recipients with an optional note above the forwarded message. Never sent. |
 
 ## Things worth knowing before filing a bug
 
@@ -120,6 +120,24 @@ Node is running.
 - **Ambiguity is refused, not guessed.** Real mailboxes can have two
   same-named siblings (this machine has twin `Junk` mailboxes in one
   account); a path matching more than one mailbox is an error naming them.
+- **Reply quotes are built by this server, not by Mail.** Mail's scripting
+  bridge discards its own quoted original (and, for forwards, the whole
+  forwarded message) the moment a body is set, with no per-message switch.
+  So `reply-draft` fetches the original and quotes it below your body in the
+  shape Mail uses itself: an `On <date>, <sender> wrote:` line and the
+  original's text inside a cite blockquote, which Mail renders with its
+  vertical quote bar; `forward-draft` with a note reproduces the `Begin
+  forwarded message:` block the same way. The quote is rebuilt from the
+  original's plain text, so the original's formatting, links and inline
+  images are not carried (its `>` quote levels are). Your signature goes
+  between the body and the quote, as in a reply composed in Mail. Mail's
+  bridge exposes the signature only as plain text, so the server saves the
+  first draft per signature twice: once to let Mail append the real signature,
+  then again with that HTML moved above the quote; later drafts in the same
+  server run need one save. A signature with inline images cannot be moved
+  and stays below the quote, with a warning in the result. A forward with a
+  note is not expected to carry the original's attachments (unverified; leave
+  the note empty to get Mail's own forward).
 - **Gmail accounts may hide standard mailboxes from the scripting bridge.**
   On this machine the Gmail-backed account exposes no `All Mail`, no
   `[Gmail]` container, and no `Drafts` mailbox; its INBOX is real and holds
@@ -135,7 +153,7 @@ Node is running.
 ## Testing
 
 ```bash
-npm test                  # tier 1: 219 unit tests, no Mail.app, runs anywhere
+npm test                  # tier 1: 252 unit tests, no Mail.app, runs anywhere
 node research/verify.mjs  # tier 2: replays every recorded probe against real Mail
 ```
 
@@ -155,8 +173,9 @@ labeled test drafts that you delete afterwards.
 ```
 src/mcp/     stdio JSON-RPC framing: initialize, tools/list, tools/call
 src/tools/   one file per tool: validate input, call, shape output
-src/mail/    domain logic that runs in Node: MIME parsing, path containment
-src/jxa/     the runner plus one .js script per operation, run via osascript
+src/mail/    domain logic that runs in Node: MIME parsing, path containment, quoting
+src/jxa/     the runner plus one .js script per operation (reply and forward
+             share respond-draft.js), run via osascript
 ```
 
 Scripts are ordinary files, independently runnable from a terminal for
